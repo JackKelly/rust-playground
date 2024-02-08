@@ -5,7 +5,7 @@ Quick experiment exploring [`ManuallyDrop`](https://doc.rust-lang.org/std/mem/st
 To detect memory leaks:
 
 ```shell
+cargo build
 sudo apt install heaptrack
-cargo run
 heaptrack target/debug/manuallydrop
 ```
