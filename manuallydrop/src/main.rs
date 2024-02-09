@@ -30,14 +30,7 @@ fn main() {
     let outer_foo: Box<Foo>;
     unsafe {
         println!("outer ptr: {:?}", *ptr);
-
         outer_foo = Box::from_raw(ptr);
-
-        // If the following line is commented out then `heaptrack` detects a memory leak
-        // and `drop` isn't called.
-
-        // Instead of `ManuallyDrop::take`, we could call:
-        // ManuallyDrop::drop(&mut *ptr);
     }
     println!("outer_foo: {:?}", outer_foo);
 } // `outer_foo` is dropped here.
