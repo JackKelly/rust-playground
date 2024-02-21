@@ -14,29 +14,21 @@ impl Foo {
             v: vec![i as u8],
         }
     }
+
+    fn get_multiple_foos(i: usize, n_foos: usize) -> Vec<Self> {
+        (0..n_foos).map(|_| Foo::new(i)).collect()
+    }
+
+    fn get_multiple_boxed_foos(i: usize, n_foos: usize) -> Vec<Box<Self>> {
+        (0..n_foos).map(|_| Box::new(Foo::new(i))).collect()
+    }
 }
 
 const N: usize = 1_000_000;
+const N_FOOS: usize = 4;
 
-fn just_a_vec() {
+fn just_a_vec_of_vecs() {
     // perf stat (result from previous commit):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     283.65 msec task-clock                       #    0.999 CPUs utilized
-    //         2      context-switches                 #    7.051 /sec
-    //         0      cpu-migrations                   #    0.000 /sec
-    //     29,380      page-faults                      #  103.577 K/sec
-    // 1,019,463,064      cycles                           #    3.594 GHz
-    // 2,189,885,518      instructions                     #    2.15  insn per cycle
-    // 433,290,818      branches                         #    1.528 G/sec
-    // 1,500,755      branch-misses                    #    0.35% of all branches
-    //
-    // 0.284074219 seconds time elapsed
-    //
-    // 0.219621000 seconds user
-    // 0.063889000 seconds sys
-
-    // perf stat (new result, for this commit, using a constructor function)
     //     Performance counter stats for './target/release/page-faults':
 
     //     320.26 msec task-clock                       #    0.998 CPUs utilized
@@ -53,37 +45,35 @@ fn just_a_vec() {
     // 0.228956000 seconds user
     // 0.088369000 seconds sys
 
+    // perf stat (new result, for this commit, using Vec<Vec<Foo>>)
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     1,131.38 msec task-clock                       #    0.996 CPUs utilized
+    //         38      context-switches                 #   33.587 /sec
+    //         2      cpu-migrations                   #    1.768 /sec
+    //     127,037      page-faults                      #  112.285 K/sec
+    // 4,075,400,737      cycles                           #    3.602 GHz
+    // 7,178,461,174      instructions                     #    1.76  insn per cycle
+    // 1,408,050,445      branches                         #    1.245 G/sec
+    // 5,003,878      branch-misses                    #    0.36% of all branches
+
+    // 1.135567781 seconds time elapsed
+
+    // 0.713242000 seconds user
+    // 0.414397000 seconds sys
+
     // Put N Foos into a Vec:
-    let vec: Vec<Foo> = (0..N).map(Foo::new).collect();
+    let vec: Vec<Vec<Foo>> = (0..N).map(|i| Foo::get_multiple_foos(i, N_FOOS)).collect();
 
     // Consume the vec:
-    for (i, f) in vec.into_iter().enumerate() {
-        assert_eq!(f.a, i);
-        assert_eq!(f.s, format!("{i}"));
-        assert_eq!(f.v, vec![i as u8]);
+    for f in vec.into_iter() {
+        assert_eq!(f.len(), N_FOOS);
     }
     println!("DONE!");
 }
 
-fn vec_of_boxes() {
+fn vec_of_vec_of_boxes() {
     // perf stat (result from previous commit):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     382.32 msec task-clock                       #    0.997 CPUs utilized
-    //         21      context-switches                 #   54.928 /sec
-    //         0      cpu-migrations                   #    0.000 /sec
-    //     33,287      page-faults                      #   87.066 K/sec
-    // 1,364,747,440      cycles                           #    3.570 GHz
-    // 2,819,102,900      instructions                     #    2.07  insn per cycle
-    // 560,198,170      branches                         #    1.465 G/sec
-    // 1,050,852      branch-misses                    #    0.19% of all branches
-    //
-    // 0.383418122 seconds time elapsed
-    //
-    // 0.261419000 seconds user
-    // 0.120655000 seconds sys
-
-    // perf stat (new result, for this commit, using a constructor function)
     //     Performance counter stats for './target/release/page-faults':
 
     //     419.55 msec task-clock                       #    0.998 CPUs utilized
@@ -100,19 +90,36 @@ fn vec_of_boxes() {
     // 0.318706000 seconds user
     // 0.100856000 seconds sys
 
+    // perf stat (new result, for this commit, using Vec<Vec<Box<Foo>>>)
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     1,456.03 msec task-clock                       #    0.998 CPUs utilized
+    //         12      context-switches                 #    8.242 /sec
+    //         2      cpu-migrations                   #    1.374 /sec
+    //     142,664      page-faults                      #   97.981 K/sec
+    // 5,256,964,184      cycles                           #    3.610 GHz
+    // 8,986,730,173      instructions                     #    1.71  insn per cycle
+    // 1,794,199,600      branches                         #    1.232 G/sec
+    // 6,784,732      branch-misses                    #    0.38% of all branches
+
+    // 1.459089706 seconds time elapsed
+
+    // 1.017636000 seconds user
+    // 0.434989000 seconds sys
+
     // Put N Foos into a Vec:
-    let vec: Vec<Box<Foo>> = (0..N).map(|i| Box::new(Foo::new(i))).collect();
+    let vec: Vec<Vec<Box<Foo>>> = (0..N)
+        .map(|i| Foo::get_multiple_boxed_foos(i, N_FOOS))
+        .collect();
 
     // Consume the vec:
-    for (i, f) in vec.into_iter().enumerate() {
-        assert_eq!(f.a, i);
-        assert_eq!(f.s, format!("{i}"));
-        assert_eq!(f.v, vec![i as u8]);
+    for f in vec.into_iter() {
+        assert_eq!(f.len(), N_FOOS);
     }
     println!("DONE!");
 }
 
 fn main() {
-    let t = thread::spawn(just_a_vec);
+    let t = thread::spawn(vec_of_vec_of_boxes);
     t.join().unwrap();
 }
