@@ -47,24 +47,7 @@ fn modify_foo(f: &mut Foo, i: usize) {
 }
 
 fn tracker_without_box(rx: Receiver<Foo>) {
-    // perf stat (result from previous commit, moving loop in main to after thread::spawn):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     594.65 msec task-clock                       #    1.590 CPUs utilized
-    //     10,199      context-switches                 #   17.151 K/sec
-    //         23      cpu-migrations                   #   38.678 /sec
-    //     29,440      page-faults                      #   49.508 K/sec
-    // 1,992,626,918      cycles                           #    3.351 GHz
-    // 2,263,279,897      instructions                     #    1.14  insn per cycle
-    // 440,862,975      branches                         #  741.386 M/sec
-    // 2,596,662      branch-misses                    #    0.59% of all branches
-
-    // 0.373985917 seconds time elapsed
-
-    // 0.398951000 seconds user
-    // 0.199475000 seconds sys
-
-    // perf stat (new result, add callback to Foo):
+    // perf stat (result from previous commit, add callback to Foo):
     //     Performance counter stats for './target/release/page-faults':
 
     //     578.30 msec task-clock                       #    1.581 CPUs utilized
@@ -80,6 +63,23 @@ fn tracker_without_box(rx: Receiver<Foo>) {
 
     // 0.388474000 seconds user
     // 0.194237000 seconds sys
+
+    // perf stat (new result, with 10 "other" threads):
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     700.25 msec task-clock                       #    1.609 CPUs utilized
+    //     10,766      context-switches                 #   15.374 K/sec
+    //         34      cpu-migrations                   #   48.554 /sec
+    //     33,412      page-faults                      #   47.714 K/sec
+    // 2,372,178,682      cycles                           #    3.388 GHz
+    // 2,297,689,550      instructions                     #    0.97  insn per cycle
+    // 443,988,408      branches                         #  634.039 M/sec
+    // 4,847,589      branch-misses                    #    1.09% of all branches
+
+    // 0.435135824 seconds time elapsed
+
+    // 0.477327000 seconds user
+    // 0.226730000 seconds sys
 
     let mut tracker: Tracker<Foo> = Tracker::new(N);
 
@@ -102,24 +102,7 @@ fn tracker_without_box(rx: Receiver<Foo>) {
 }
 
 fn tracker_with_internal_boxes(rx: Receiver<Foo>) {
-    // perf stat (result from previous commit, moving loop in main to after thread::spawn):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     497.91 msec task-clock                       #    1.536 CPUs utilized
-    //     4,158      context-switches                 #    8.351 K/sec
-    //         12      cpu-migrations                   #   24.101 /sec
-    //     35,550      page-faults                      #   71.399 K/sec
-    // 1,748,488,569      cycles                           #    3.512 GHz
-    // 2,600,010,625      instructions                     #    1.49  insn per cycle
-    // 525,993,682      branches                         #    1.056 G/sec
-    // 3,503,730      branch-misses                    #    0.67% of all branches
-
-    // 0.324156369 seconds time elapsed
-
-    // 0.346070000 seconds user
-    // 0.150642000 seconds sys
-
-    // perf stat (new result, add callback to Foo):
+    // perf stat (result from previous commit, add callback to Foo):
     //     Performance counter stats for './target/release/page-faults':
 
     //     559.79 msec task-clock                       #    1.529 CPUs utilized
@@ -135,6 +118,23 @@ fn tracker_with_internal_boxes(rx: Receiver<Foo>) {
 
     // 0.372921000 seconds user
     // 0.188555000 seconds sys
+
+    // perf stat (new result, with 10 "other" threads):
+    //  Performance counter stats for './target/release/page-faults':
+
+    //     663.82 msec task-clock                       #    1.569 CPUs utilized
+    //     4,484      context-switches                 #    6.755 K/sec
+    //     18      cpu-migrations                   #   27.116 /sec
+    // 39,808      page-faults                      #   59.968 K/sec
+    // 2,288,625,267      cycles                           #    3.448 GHz
+    // 2,739,903,647      instructions                     #    1.20  insn per cycle
+    // 546,358,750      branches                         #  823.053 M/sec
+    // 4,702,359      branch-misses                    #    0.86% of all branches
+
+    // 0.423028782 seconds time elapsed
+
+    // 0.491972000 seconds user
+    // 0.171990000 seconds sys
 
     let mut tracker: TrackerUsingBox<Foo> = TrackerUsingBox::new(N);
 
@@ -158,8 +158,13 @@ fn tracker_with_internal_boxes(rx: Receiver<Foo>) {
 
 #[tokio::main]
 async fn main() {
+    let mut other_threads = Vec::new();
+    for _ in 0..10 {
+        other_threads.push(thread::spawn(|| {}));
+    }
+
     let (tx, rx) = channel();
-    let t = thread::spawn(move || tracker_without_box(rx));
+    let t = thread::spawn(move || tracker_with_internal_boxes(rx));
 
     for i in 0..N {
         tx.send(get_foo(i)).unwrap();
@@ -168,4 +173,7 @@ async fn main() {
     // Finish.
     drop(tx);
     t.join().unwrap();
+    other_threads.into_iter().for_each(|handle| {
+        handle.join().unwrap();
+    });
 }
