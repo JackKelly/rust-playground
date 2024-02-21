@@ -1,3 +1,5 @@
+use tokio::sync::oneshot;
+
 use crate::tracker::{Tracker, TrackerUsingBox};
 use std::{
     ffi::CString,
@@ -46,25 +48,8 @@ fn modify_foo(f: &mut Foo, i: usize) {
     f.v = Some(Ok(vec![i as u8]));
 }
 
-fn tracker_without_box(rx: Receiver<Foo>) {
-    // perf stat (result from previous commit, add callback to Foo):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     578.30 msec task-clock                       #    1.581 CPUs utilized
-    //     10,736      context-switches                 #   18.565 K/sec
-    //         13      cpu-migrations                   #   22.480 /sec
-    //     33,391      page-faults                      #   57.740 K/sec
-    // 1,929,122,730      cycles                           #    3.336 GHz
-    // 2,241,697,839      instructions                     #    1.16  insn per cycle
-    // 436,382,914      branches                         #  754.600 M/sec
-    // 3,235,032      branch-misses                    #    0.74% of all branches
-
-    // 0.365745866 seconds time elapsed
-
-    // 0.388474000 seconds user
-    // 0.194237000 seconds sys
-
-    // perf stat (new result, with 10 "other" threads):
+fn tracker_without_box(rx: Receiver<Foo>, one_tx: oneshot::Sender<()>) {
+    // perf stat (result from previous commit, with 10 "other" threads):
     //     Performance counter stats for './target/release/page-faults':
 
     //     700.25 msec task-clock                       #    1.609 CPUs utilized
@@ -81,9 +66,27 @@ fn tracker_without_box(rx: Receiver<Foo>) {
     // 0.477327000 seconds user
     // 0.226730000 seconds sys
 
+    // perf stat (where we use tokio::sync::oneshot::channel main awaits the channel rx):
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     478.87 msec task-clock                       #    1.538 CPUs utilized
+    //      8,580      context-switches                 #   17.917 K/sec
+    //         28      cpu-migrations                   #   58.471 /sec
+    //     33,415      page-faults                      #   69.779 K/sec
+    // 1,650,791,795      cycles                           #    3.447 GHz
+    // 2,152,699,601      instructions                     #    1.30  insn per cycle
+    // 423,197,901      branches                         #  883.741 M/sec
+    //  2,141,607      branch-misses                    #    0.51% of all branches
+
+    // 0.311305315 seconds time elapsed
+
+    // 0.360623000 seconds user
+    // 0.118841000 seconds sys
+
     let mut tracker: Tracker<Foo> = Tracker::new(N);
 
-    for f in rx.iter() {
+    for _ in 0..N {
+        let f = rx.recv().unwrap();
         let index = tracker.get_next_index().unwrap();
         tracker.put(index, f);
     }
@@ -99,27 +102,11 @@ fn tracker_without_box(rx: Receiver<Foo>) {
         callback(1)
     }
     println!("DONE!");
+    one_tx.send(()).unwrap();
 }
 
-fn tracker_with_internal_boxes(rx: Receiver<Foo>) {
-    // perf stat (result from previous commit, add callback to Foo):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     559.79 msec task-clock                       #    1.529 CPUs utilized
-    //      4,359      context-switches                 #    7.787 K/sec
-    //         14      cpu-migrations                   #   25.009 /sec
-    //     41,593      page-faults                      #   74.301 K/sec
-    // 1,914,205,630      cycles                           #    3.419 GHz
-    // 2,704,023,649      instructions                     #    1.41  insn per cycle
-    // 540,543,477      branches                         #  965.611 M/sec
-    //  2,092,312      branch-misses                    #    0.39% of all branches
-
-    // 0.366229602 seconds time elapsed
-
-    // 0.372921000 seconds user
-    // 0.188555000 seconds sys
-
-    // perf stat (new result, with 10 "other" threads):
+fn tracker_with_internal_boxes(rx: Receiver<Foo>, one_tx: oneshot::Sender<()>) {
+    // perf stat (result from previous commit, with 10 "other" threads):
     //  Performance counter stats for './target/release/page-faults':
 
     //     663.82 msec task-clock                       #    1.569 CPUs utilized
@@ -136,9 +123,27 @@ fn tracker_with_internal_boxes(rx: Receiver<Foo>) {
     // 0.491972000 seconds user
     // 0.171990000 seconds sys
 
+    // perf stat (where we use tokio::sync::oneshot::channel main awaits the channel rx):
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     511.07 msec task-clock                       #    1.486 CPUs utilized
+    //      4,829      context-switches                 #    9.449 K/sec
+    //         15      cpu-migrations                   #   29.350 /sec
+    //     42,126      page-faults                      #   82.428 K/sec
+    // 1,788,990,220      cycles                           #    3.501 GHz
+    // 2,674,420,345      instructions                     #    1.49  insn per cycle
+    // 538,229,767      branches                         #    1.053 G/sec
+    //  3,000,251      branch-misses                    #    0.56% of all branches
+
+    // 0.344002367 seconds time elapsed
+
+    // 0.338146000 seconds user
+    // 0.173098000 seconds sys
+
     let mut tracker: TrackerUsingBox<Foo> = TrackerUsingBox::new(N);
 
-    for f in rx.iter() {
+    for _ in 0..N {
+        let f = rx.recv().unwrap();
         let index = tracker.get_next_index().unwrap();
         tracker.put(index, f);
     }
@@ -154,6 +159,8 @@ fn tracker_with_internal_boxes(rx: Receiver<Foo>) {
         callback(1)
     }
     println!("DONE!");
+
+    one_tx.send(()).unwrap();
 }
 
 #[tokio::main]
@@ -164,14 +171,16 @@ async fn main() {
     }
 
     let (tx, rx) = channel();
-    let t = thread::spawn(move || tracker_with_internal_boxes(rx));
+    let (one_tx, one_rx) = oneshot::channel();
+    let t = thread::spawn(move || tracker_without_box(rx, one_tx));
 
     for i in 0..N {
         tx.send(get_foo(i)).unwrap();
     }
 
+    one_rx.await.unwrap();
+
     // Finish.
-    drop(tx);
     t.join().unwrap();
     other_threads.into_iter().for_each(|handle| {
         handle.join().unwrap();
