@@ -22,6 +22,10 @@ impl<T> TrackerUsingBox<T> {
         self.ops_in_flight[index].replace(op);
     }
 
+    pub(crate) fn as_mut(&mut self, index: usize) -> Option<&mut T> {
+        self.ops_in_flight[index].as_mut().map(|t| t.as_mut())
+    }
+
     pub(crate) fn remove(&mut self, index: usize) -> Option<T> {
         self.ops_in_flight[index].take().map(|t| {
             self.next_index.push_back(index);
@@ -49,6 +53,10 @@ impl<T> Tracker<T> {
 
     pub(crate) fn put(&mut self, index: usize, op: T) {
         self.ops_in_flight[index].replace(op);
+    }
+
+    pub(crate) fn as_mut(&mut self, index: usize) -> Option<&mut T> {
+        self.ops_in_flight[index].as_mut()
     }
 
     pub(crate) fn remove(&mut self, index: usize) -> Option<T> {
