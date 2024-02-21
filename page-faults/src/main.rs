@@ -45,39 +45,39 @@ fn modify_foo(f: &mut Foo, i: usize) {
 }
 
 fn tracker_without_box(rx: Receiver<Foo>) {
-    // perf stat (result from previous commit, using a channel to send Foos to this thread):
+    // perf stat (result from previous commit, adding tokio::main to main function):
     //     Performance counter stats for './target/release/page-faults':
 
-    //     313.77 msec task-clock                       #    0.997 CPUs utilized
-    //         12      context-switches                 #   38.245 /sec
-    //         2      cpu-migrations                   #    6.374 /sec
-    //     43,243      page-faults                      #  137.818 K/sec
-    // 1,126,443,573      cycles                           #    3.590 GHz
-    // 2,031,061,353      instructions                     #    1.80  insn per cycle
-    // 401,767,162      branches                         #    1.280 G/sec
-    // 1,081,191      branch-misses                    #    0.27% of all branches
-
-    // 0.314785131 seconds time elapsed
-
-    // 0.247828000 seconds user
-    // 0.063955000 seconds sys
-
-    // perf stat (new result, adding tokio::main to main function):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     437.33 msec task-clock                       #    1.000 CPUs utilized             
-    //         46      context-switches                 #  105.185 /sec                      
-    //         8      cpu-migrations                   #   18.293 /sec                      
-    //     49,160      page-faults                      #  112.410 K/sec                     
-    // 1,534,198,396      cycles                           #    3.508 GHz                       
-    // 2,582,509,500      instructions                     #    1.68  insn per cycle            
-    // 522,394,062      branches                         #    1.195 G/sec                     
-    // 2,458,108      branch-misses                    #    0.47% of all branches           
+    //     437.33 msec task-clock                       #    1.000 CPUs utilized
+    //         46      context-switches                 #  105.185 /sec
+    //         8      cpu-migrations                   #   18.293 /sec
+    //     49,160      page-faults                      #  112.410 K/sec
+    // 1,534,198,396      cycles                           #    3.508 GHz
+    // 2,582,509,500      instructions                     #    1.68  insn per cycle
+    // 522,394,062      branches                         #    1.195 G/sec
+    // 2,458,108      branch-misses                    #    0.47% of all branches
 
     // 0.437383174 seconds time elapsed
 
     // 0.295615000 seconds user
     // 0.139817000 seconds sys
+
+    // perf stat (new result, moving loop in main to after thread::spawn):
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     594.65 msec task-clock                       #    1.590 CPUs utilized
+    //     10,199      context-switches                 #   17.151 K/sec
+    //         23      cpu-migrations                   #   38.678 /sec
+    //     29,440      page-faults                      #   49.508 K/sec
+    // 1,992,626,918      cycles                           #    3.351 GHz
+    // 2,263,279,897      instructions                     #    1.14  insn per cycle
+    // 440,862,975      branches                         #  741.386 M/sec
+    // 2,596,662      branch-misses                    #    0.59% of all branches
+
+    // 0.373985917 seconds time elapsed
+
+    // 0.398951000 seconds user
+    // 0.199475000 seconds sys
 
     let mut tracker: Tracker<Foo> = Tracker::new(N);
 
@@ -98,39 +98,39 @@ fn tracker_without_box(rx: Receiver<Foo>) {
 }
 
 fn tracker_with_internal_boxes(rx: Receiver<Foo>) {
-    // perf stat (result from previous commit, using a channel to send Foos to this thread):
+    // perf stat (result from previous commit, adding tokio::main to main function):
     //     Performance counter stats for './target/release/page-faults':
 
-    //     415.84 msec task-clock                       #    0.996 CPUs utilized
-    //         13      context-switches                 #   31.262 /sec
-    //         1      cpu-migrations                   #    2.405 /sec
-    //     49,104      page-faults                      #  118.084 K/sec
-    // 1,483,189,562      cycles                           #    3.567 GHz
-    // 2,623,045,903      instructions                     #    1.77  insn per cycle
-    // 528,208,249      branches                         #    1.270 G/sec
-    // 1,668,119      branch-misses                    #    0.32% of all branches
-
-    // 0.417494504 seconds time elapsed
-
-    // 0.291024000 seconds user
-    // 0.123585000 seconds sys
-
-    // perf stat (new result, adding tokio::main to main function):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     432.97 msec task-clock                       #    0.998 CPUs utilized             
-    //         75      context-switches                 #  173.223 /sec                      
-    //         10      cpu-migrations                   #   23.096 /sec                      
-    //     49,158      page-faults                      #  113.537 K/sec                     
-    // 1,528,135,578      cycles                           #    3.529 GHz                       
-    // 2,583,831,290      instructions                     #    1.69  insn per cycle            
-    // 522,762,149      branches                         #    1.207 G/sec                     
-    // 1,622,149      branch-misses                    #    0.31% of all branches           
+    //     432.97 msec task-clock                       #    0.998 CPUs utilized
+    //         75      context-switches                 #  173.223 /sec
+    //         10      cpu-migrations                   #   23.096 /sec
+    //     49,158      page-faults                      #  113.537 K/sec
+    // 1,528,135,578      cycles                           #    3.529 GHz
+    // 2,583,831,290      instructions                     #    1.69  insn per cycle
+    // 522,762,149      branches                         #    1.207 G/sec
+    // 1,622,149      branch-misses                    #    0.31% of all branches
 
     // 0.433699119 seconds time elapsed
 
     // 0.309037000 seconds user
     // 0.121988000 seconds sys
+
+    // perf stat (new result, moving loop in main to after thread::spawn):
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     497.91 msec task-clock                       #    1.536 CPUs utilized
+    //     4,158      context-switches                 #    8.351 K/sec
+    //         12      cpu-migrations                   #   24.101 /sec
+    //     35,550      page-faults                      #   71.399 K/sec
+    // 1,748,488,569      cycles                           #    3.512 GHz
+    // 2,600,010,625      instructions                     #    1.49  insn per cycle
+    // 525,993,682      branches                         #    1.056 G/sec
+    // 3,503,730      branch-misses                    #    0.67% of all branches
+
+    // 0.324156369 seconds time elapsed
+
+    // 0.346070000 seconds user
+    // 0.150642000 seconds sys
 
     let mut tracker: TrackerUsingBox<Foo> = TrackerUsingBox::new(N);
 
@@ -153,12 +153,13 @@ fn tracker_with_internal_boxes(rx: Receiver<Foo>) {
 #[tokio::main]
 async fn main() {
     let (tx, rx) = channel();
+    let t = thread::spawn(move || tracker_with_internal_boxes(rx));
 
     for i in 0..N {
         tx.send(get_foo(i)).unwrap();
     }
 
-    let t = thread::spawn(move || tracker_without_box(rx));
+    // Finish.
     drop(tx);
     t.join().unwrap();
 }
