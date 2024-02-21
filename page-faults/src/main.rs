@@ -1,5 +1,10 @@
 use crate::tracker::{Tracker, TrackerUsingBox};
-use std::{ffi::CString, fmt::Error, thread};
+use std::{
+    ffi::CString,
+    fmt::Error,
+    sync::mpsc::{channel, Receiver},
+    thread,
+};
 
 mod tracker;
 
@@ -39,25 +44,8 @@ fn modify_foo(f: &mut Foo, i: usize) {
     f.v = Some(Ok(vec![i as u8]));
 }
 
-fn tracker_without_box() {
-    // perf stat (result from previous commit, changing Foo.v from Vec<u8> to Option<Result<Vec<u8>>>):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     245.32 msec task-clock                       #    0.993 CPUs utilized
-    //         26      context-switches                 #  105.982 /sec
-    //         1      cpu-migrations                   #    4.076 /sec
-    //     29,382      page-faults                      #  119.768 K/sec
-    // 888,155,144      cycles                           #    3.620 GHz
-    // 1,842,772,334      instructions                     #    2.07  insn per cycle
-    // 365,392,692      branches                         #    1.489 G/sec
-    // 257,191      branch-misses                    #    0.07% of all branches
-
-    // 0.246958285 seconds time elapsed
-
-    // 0.180939000 seconds user
-    // 0.064334000 seconds sys
-
-    // perf stat (new result, using separate for loop to modify foo):
+fn tracker_without_box(rx: Receiver<Foo>) {
+    // perf stat (result from previous commit, using separate for loop to modify foo):
     //     Performance counter stats for './target/release/page-faults':
 
     //     268.22 msec task-clock                       #    0.997 CPUs utilized
@@ -74,11 +62,28 @@ fn tracker_without_box() {
     // 0.204217000 seconds user
     // 0.064068000 seconds sys
 
+    // perf stat (new result, using a channel to send Foos to this thread):
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     313.77 msec task-clock                       #    0.997 CPUs utilized
+    //         12      context-switches                 #   38.245 /sec
+    //         2      cpu-migrations                   #    6.374 /sec
+    //     43,243      page-faults                      #  137.818 K/sec
+    // 1,126,443,573      cycles                           #    3.590 GHz
+    // 2,031,061,353      instructions                     #    1.80  insn per cycle
+    // 401,767,162      branches                         #    1.280 G/sec
+    // 1,081,191      branch-misses                    #    0.27% of all branches
+
+    // 0.314785131 seconds time elapsed
+
+    // 0.247828000 seconds user
+    // 0.063955000 seconds sys
+
     let mut tracker: Tracker<Foo> = Tracker::new(N);
 
-    for i in 0..N {
+    for f in rx.iter() {
         let index = tracker.get_next_index().unwrap();
-        tracker.put(index, get_foo(i));
+        tracker.put(index, f);
     }
 
     for i in 0..N {
@@ -92,25 +97,8 @@ fn tracker_without_box() {
     println!("DONE!");
 }
 
-fn tracker_with_internal_boxes() {
-    // perf stat (result from previous commit, changing Foo.v from Vec<u8> to Option<Result<Vec<u8>>>):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     373.11 msec task-clock                       #    0.995 CPUs utilized
-    //         23      context-switches                 #   61.645 /sec
-    //         1      cpu-migrations                   #    2.680 /sec
-    //     35,243      page-faults                      #   94.458 K/sec
-    // 1,343,844,820      cycles                           #    3.602 GHz
-    // 2,418,324,295      instructions                     #    1.80  insn per cycle
-    // 489,047,365      branches                         #    1.311 G/sec
-    // 1,081,807      branch-misses                    #    0.22% of all branches
-
-    // 0.375044581 seconds time elapsed
-
-    // 0.272118000 seconds user
-    // 0.100043000 seconds sys
-
-    // perf stat (new result, using separate for loop to modify foo):
+fn tracker_with_internal_boxes(rx: Receiver<Foo>) {
+    // perf stat (result from previous commit, using separate for loop to modify foo):
     //     Performance counter stats for './target/release/page-faults':
 
     //     384.64 msec task-clock                       #    0.996 CPUs utilized
@@ -127,11 +115,28 @@ fn tracker_with_internal_boxes() {
     // 0.255152000 seconds user
     // 0.129601000 seconds sys
 
+    // perf stat (new result, using a channel to send Foos to this thread):
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     415.84 msec task-clock                       #    0.996 CPUs utilized
+    //         13      context-switches                 #   31.262 /sec
+    //         1      cpu-migrations                   #    2.405 /sec
+    //     49,104      page-faults                      #  118.084 K/sec
+    // 1,483,189,562      cycles                           #    3.567 GHz
+    // 2,623,045,903      instructions                     #    1.77  insn per cycle
+    // 528,208,249      branches                         #    1.270 G/sec
+    // 1,668,119      branch-misses                    #    0.32% of all branches
+
+    // 0.417494504 seconds time elapsed
+
+    // 0.291024000 seconds user
+    // 0.123585000 seconds sys
+
     let mut tracker: TrackerUsingBox<Foo> = TrackerUsingBox::new(N);
 
-    for i in 0..N {
+    for f in rx.iter() {
         let index = tracker.get_next_index().unwrap();
-        tracker.put(index, get_foo(i));
+        tracker.put(index, f);
     }
 
     for i in 0..N {
@@ -146,6 +151,13 @@ fn tracker_with_internal_boxes() {
 }
 
 fn main() {
-    let t = thread::spawn(tracker_without_box);
+    let (tx, rx) = channel();
+
+    for i in 0..N {
+        tx.send(get_foo(i)).unwrap();
+    }
+
+    let t = thread::spawn(move || tracker_with_internal_boxes(rx));
+    drop(tx);
     t.join().unwrap();
 }
