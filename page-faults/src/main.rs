@@ -1,3 +1,5 @@
+use std::thread;
+
 struct Foo {
     a: usize,
     s: String,
@@ -36,6 +38,7 @@ fn just_a_vec() {
         assert_eq!(f.a, i);
         assert_eq!(f.s, format!("{i}"));
     }
+    println!("DONE!");
 }
 
 fn vec_of_boxes() {
@@ -71,9 +74,10 @@ fn vec_of_boxes() {
         assert_eq!(f.a, i);
         assert_eq!(f.s, format!("{i}"));
     }
+    println!("DONE!");
 }
 
 fn main() {
-    // just_a_vec();
-    vec_of_boxes()
+    let t = thread::spawn(just_a_vec);
+    t.join().unwrap();
 }
