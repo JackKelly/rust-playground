@@ -1,188 +1,98 @@
+use io_uring::{opcode, squeue};
 use tokio::sync::oneshot;
 
-use crate::tracker::{Tracker, TrackerUsingBox};
 use std::{
-    ffi::CString,
-    fmt::Error,
+    collections::VecDeque,
     sync::mpsc::{channel, Receiver},
     thread,
 };
+const N: usize = 1_000_000;
+type InnerVec = Vec<Box<squeue::Entry>>;
+// type InnerVec = Vec<squeue::Entry>;
 
-mod tracker;
+fn worker_thread_function(rx: Receiver<usize>, oneshot_tx: oneshot::Sender<()>) {
+    const SQ_RING_SIZE: usize = 14 * 3;
+    let mut internal_queue: VecDeque<InnerVec> = VecDeque::with_capacity(SQ_RING_SIZE);
+    let mut n = 0;
 
-struct Foo {
-    a: usize,
-    s: CString,
-    v: Option<Result<Vec<u8>, Error>>,
-    callback: Option<Box<dyn FnOnce(usize) + Send + Sync>>,
-}
+    while n < N {
+        // Push Entries onto the internal queue:
+        'inner: for _ in 0..SQ_RING_SIZE {
+            if n >= N {
+                break 'inner;
+            }
+            let msg = rx.recv().unwrap();
+            let entries = create_sq_entries(msg);
+            internal_queue.push_back(entries);
+            n += 1;
+        }
 
-impl Foo {
-    fn new(i: usize) -> Self {
-        Self {
-            a: i,
-            s: CString::new(format!("{i}").as_bytes()).unwrap(),
-            v: None,
-            callback: Some(Box::new(move |_: usize| {})),
+        // Consume Entries from the internal queue:
+        while let Some(entries) = internal_queue.pop_front() {
+            let entries = [*entries[0].clone(), *entries[1].clone()];
+            assert_eq!(entries.len(), 2);
+            let s = format!("{:?}, {:?}", entries[0], entries[1]);
+            assert_eq!(s, "Entry { op_code: 0, flags: 0, user_data: 0 }, Entry { op_code: 0, flags: 0, user_data: 0 }");
         }
     }
 
-    fn get_multiple_foos(i: usize, n_foos: usize) -> Vec<Self> {
-        (0..n_foos).map(|_| Foo::new(i)).collect()
-    }
-
-    fn get_multiple_boxed_foos(i: usize, n_foos: usize) -> Vec<Box<Self>> {
-        (0..n_foos).map(|_| Box::new(Foo::new(i))).collect()
-    }
+    oneshot_tx.send(()).unwrap();
 }
 
-const N: usize = 1_000_000;
-const N_FOOS: usize = 4;
+fn create_sq_entries(msg: usize) -> InnerVec {
+    assert!(msg < N); // Just to make sure the compiler doesn't optimise away msg.
 
-fn get_foo(i: usize) -> Foo {
-    assert!(i < N);
-    Foo::new(i)
-}
-
-fn modify_foo(f: &mut Foo, i: usize) {
-    f.v = Some(Ok(vec![i as u8]));
-}
-
-fn tracker_without_box(rx: Receiver<Foo>, one_tx: oneshot::Sender<()>) {
-    // perf stat (result from previous commit, with 10 "other" threads):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     700.25 msec task-clock                       #    1.609 CPUs utilized
-    //     10,766      context-switches                 #   15.374 K/sec
-    //         34      cpu-migrations                   #   48.554 /sec
-    //     33,412      page-faults                      #   47.714 K/sec
-    // 2,372,178,682      cycles                           #    3.388 GHz
-    // 2,297,689,550      instructions                     #    0.97  insn per cycle
-    // 443,988,408      branches                         #  634.039 M/sec
-    // 4,847,589      branch-misses                    #    1.09% of all branches
-
-    // 0.435135824 seconds time elapsed
-
-    // 0.477327000 seconds user
-    // 0.226730000 seconds sys
-
-    // perf stat (where we use tokio::sync::oneshot::channel main awaits the channel rx):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     478.87 msec task-clock                       #    1.538 CPUs utilized
-    //      8,580      context-switches                 #   17.917 K/sec
-    //         28      cpu-migrations                   #   58.471 /sec
-    //     33,415      page-faults                      #   69.779 K/sec
-    // 1,650,791,795      cycles                           #    3.447 GHz
-    // 2,152,699,601      instructions                     #    1.30  insn per cycle
-    // 423,197,901      branches                         #  883.741 M/sec
-    //  2,141,607      branch-misses                    #    0.51% of all branches
-
-    // 0.311305315 seconds time elapsed
-
-    // 0.360623000 seconds user
-    // 0.118841000 seconds sys
-
-    let mut tracker: Tracker<Foo> = Tracker::new(N);
-
-    for _ in 0..N {
-        let f = rx.recv().unwrap();
-        let index = tracker.get_next_index().unwrap();
-        tracker.put(index, f);
-    }
-
-    for i in 0..N {
-        let f = tracker.as_mut(i).unwrap();
-        modify_foo(f, i);
-    }
-
-    for i in 0..N {
-        let f = tracker.remove(i).unwrap();
-        let callback = f.callback.unwrap();
-        callback(1)
-    }
-    println!("DONE!");
-    one_tx.send(()).unwrap();
-}
-
-fn tracker_with_internal_boxes(rx: Receiver<Foo>, one_tx: oneshot::Sender<()>) {
-    // perf stat (result from previous commit, with 10 "other" threads):
-    //  Performance counter stats for './target/release/page-faults':
-
-    //     663.82 msec task-clock                       #    1.569 CPUs utilized
-    //     4,484      context-switches                 #    6.755 K/sec
-    //     18      cpu-migrations                   #   27.116 /sec
-    // 39,808      page-faults                      #   59.968 K/sec
-    // 2,288,625,267      cycles                           #    3.448 GHz
-    // 2,739,903,647      instructions                     #    1.20  insn per cycle
-    // 546,358,750      branches                         #  823.053 M/sec
-    // 4,702,359      branch-misses                    #    0.86% of all branches
-
-    // 0.423028782 seconds time elapsed
-
-    // 0.491972000 seconds user
-    // 0.171990000 seconds sys
-
-    // perf stat (where we use tokio::sync::oneshot::channel main awaits the channel rx):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     511.07 msec task-clock                       #    1.486 CPUs utilized
-    //      4,829      context-switches                 #    9.449 K/sec
-    //         15      cpu-migrations                   #   29.350 /sec
-    //     42,126      page-faults                      #   82.428 K/sec
-    // 1,788,990,220      cycles                           #    3.501 GHz
-    // 2,674,420,345      instructions                     #    1.49  insn per cycle
-    // 538,229,767      branches                         #    1.053 G/sec
-    //  3,000,251      branch-misses                    #    0.56% of all branches
-
-    // 0.344002367 seconds time elapsed
-
-    // 0.338146000 seconds user
-    // 0.173098000 seconds sys
-
-    let mut tracker: TrackerUsingBox<Foo> = TrackerUsingBox::new(N);
-
-    for _ in 0..N {
-        let f = rx.recv().unwrap();
-        let index = tracker.get_next_index().unwrap();
-        tracker.put(index, f);
-    }
-
-    for i in 0..N {
-        let f = tracker.as_mut(i).unwrap();
-        modify_foo(f, i);
-    }
-
-    for i in 0..N {
-        let f = tracker.remove(i).unwrap();
-        let callback = f.callback.unwrap();
-        callback(1)
-    }
-    println!("DONE!");
-
-    one_tx.send(()).unwrap();
+    vec![
+        Box::new(opcode::Nop::new().build()),
+        Box::new(opcode::Nop::new().build()),
+    ]
+    //vec![opcode::Nop::new().build(), opcode::Nop::new().build()]
 }
 
 #[tokio::main]
 async fn main() {
-    let mut other_threads = Vec::new();
-    for _ in 0..10 {
-        other_threads.push(thread::spawn(|| {}));
-    }
-
     let (tx, rx) = channel();
-    let (one_tx, one_rx) = oneshot::channel();
-    let t = thread::spawn(move || tracker_without_box(rx, one_tx));
+    let (oneshot_tx, oneshot_rx) = oneshot::channel();
+    let t = thread::spawn(move || worker_thread_function(rx, oneshot_tx));
 
     for i in 0..N {
-        tx.send(get_foo(i)).unwrap();
+        tx.send(i).unwrap();
     }
 
-    one_rx.await.unwrap();
-
     // Finish.
+    oneshot_rx.await.unwrap();
     t.join().unwrap();
-    other_threads.into_iter().for_each(|handle| {
-        handle.join().unwrap();
-    });
 }
+
+// With Box:
+// Performance counter stats for './target/release/page-faults':
+// 690.53 msec task-clock                       #    1.040 CPUs utilized
+//    471      context-switches                 #  682.084 /sec
+//     13      cpu-migrations                   #   18.826 /sec
+//  4,053      page-faults                      #    5.869 K/sec
+// 2,462,191,190      cycles                           #    3.566 GHz
+// 5,818,401,932      instructions                     #    2.36  insn per cycle
+// 1,210,713,595      branches                         #    1.753 G/sec
+// 5,558,308      branch-misses                    #    0.46% of all branches
+
+// 0.663811234 seconds time elapsed
+
+// 0.675375000 seconds user
+// 0.011918000 seconds sys
+
+/////////////////////////////////////////////////////////////////////
+// Without Box:
+// Performance counter stats for './target/release/page-faults':
+// 591.49 msec task-clock                       #    1.045 CPUs utilized
+//    498      context-switches                 #  841.940 /sec
+//     13      cpu-migrations                   #   21.978 /sec
+//  4,077      page-faults                      #    6.893 K/sec
+// 2,113,414,848      cycles                           #    3.573 GHz
+// 5,092,619,061      instructions                     #    2.41  insn per cycle
+// 1,045,961,482      branches                         #    1.768 G/sec
+// 5,239,599      branch-misses                    #    0.50% of all branches
+
+// 0.565925373 seconds time elapsed
+
+// 0.582248000 seconds user
+// 0.007976000 seconds sys
