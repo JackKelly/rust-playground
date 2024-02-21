@@ -30,25 +30,13 @@ impl Foo {
 const N: usize = 1_000_000;
 const N_FOOS: usize = 4;
 
+fn get_foo(i: usize) -> Foo {
+    assert!(i < N);
+    Foo::new(i)
+}
+
 fn tracker_without_box() {
-    // perf stat (result from previous commit):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     1,131.38 msec task-clock                       #    0.996 CPUs utilized
-    //         38      context-switches                 #   33.587 /sec
-    //         2      cpu-migrations                   #    1.768 /sec
-    //     127,037      page-faults                      #  112.285 K/sec
-    // 4,075,400,737      cycles                           #    3.602 GHz
-    // 7,178,461,174      instructions                     #    1.76  insn per cycle
-    // 1,408,050,445      branches                         #    1.245 G/sec
-    // 5,003,878      branch-misses                    #    0.36% of all branches
-
-    // 1.135567781 seconds time elapsed
-
-    // 0.713242000 seconds user
-    // 0.414397000 seconds sys
-
-    // perf stat (new result, for this commit, using Tracker<Foo>)
+    // perf stat (result from previous commit, using Tracker<Foo>)
     //     Performance counter stats for './target/release/page-faults':
 
     //     245.52 msec task-clock                       #    0.995 CPUs utilized
@@ -65,11 +53,28 @@ fn tracker_without_box() {
     // 0.172706000 seconds user
     // 0.072295000 seconds sys
 
+    // perf stat (using get_foo):
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     232.65 msec task-clock                       #    0.998 CPUs utilized
+    //         2      context-switches                 #    8.597 /sec
+    //         0      cpu-migrations                   #    0.000 /sec
+    //     31,334      page-faults                      #  134.686 K/sec
+    // 853,568,165      cycles                           #    3.669 GHz
+    // 1,472,453,604      instructions                     #    1.73  insn per cycle
+    // 286,803,149      branches                         #    1.233 G/sec
+    // 1,603,596      branch-misses                    #    0.56% of all branches
+
+    // 0.233149301 seconds time elapsed
+
+    // 0.171221000 seconds user
+    // 0.059728000 seconds sys
+
     let mut tracker: Tracker<Foo> = Tracker::new(N);
 
     for i in 0..N {
         let index = tracker.get_next_index().unwrap();
-        tracker.put(index, Foo::new(i));
+        tracker.put(index, get_foo(i));
     }
 
     for i in 0..N {
@@ -79,24 +84,7 @@ fn tracker_without_box() {
 }
 
 fn tracker_with_internal_boxes() {
-    // perf stat (result from previous commit):
-    //     Performance counter stats for './target/release/page-faults':
-
-    //     1,456.03 msec task-clock                       #    0.998 CPUs utilized
-    //         12      context-switches                 #    8.242 /sec
-    //         2      cpu-migrations                   #    1.374 /sec
-    //     142,664      page-faults                      #   97.981 K/sec
-    // 5,256,964,184      cycles                           #    3.610 GHz
-    // 8,986,730,173      instructions                     #    1.71  insn per cycle
-    // 1,794,199,600      branches                         #    1.232 G/sec
-    // 6,784,732      branch-misses                    #    0.38% of all branches
-
-    // 1.459089706 seconds time elapsed
-
-    // 1.017636000 seconds user
-    // 0.434989000 seconds sys
-
-    // perf stat (new result, for this commit, using TrackerWithBox<Foo>)
+    // perf stat (result from previous commit, using TrackerWithBox<Foo>)
     //     Performance counter stats for './target/release/page-faults':
 
     //     335.88 msec task-clock                       #    0.992 CPUs utilized
@@ -113,11 +101,28 @@ fn tracker_with_internal_boxes() {
     // 0.150666000 seconds user
     // 0.182386000 seconds sys
 
+    // perf stat (using get_foo):
+    //     Performance counter stats for './target/release/page-faults':
+
+    //     342.07 msec task-clock                       #    0.997 CPUs utilized
+    //         3      context-switches                 #    8.770 /sec
+    //         0      cpu-migrations                   #    0.000 /sec
+    //     35,240      page-faults                      #  103.019 K/sec
+    // 1,233,912,179      cycles                           #    3.607 GHz
+    // 2,195,602,250      instructions                     #    1.78  insn per cycle
+    // 432,470,106      branches                         #    1.264 G/sec
+    // 1,517,877      branch-misses                    #    0.35% of all branches
+
+    // 0.343104731 seconds time elapsed
+
+    // 0.229724000 seconds user
+    // 0.112846000 seconds sys
+
     let mut tracker: TrackerUsingBox<Foo> = TrackerUsingBox::new(N);
 
     for i in 0..N {
         let index = tracker.get_next_index().unwrap();
-        tracker.put(index, Foo::new(i));
+        tracker.put(index, get_foo(i));
     }
 
     for i in 0..N {
@@ -127,6 +132,6 @@ fn tracker_with_internal_boxes() {
 }
 
 fn main() {
-    let t = thread::spawn(tracker_without_box);
+    let t = thread::spawn(tracker_with_internal_boxes);
     t.join().unwrap();
 }
