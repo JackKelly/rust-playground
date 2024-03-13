@@ -1,4 +1,4 @@
-use rayon::iter::ParallelBridge;
+use rayon::iter::{IntoParallelIterator, ParallelBridge};
 use rayon::prelude::ParallelIterator;
 use std::sync::mpsc::channel;
 
@@ -10,14 +10,21 @@ fn main() {
         .build()
         .unwrap();
 
-    let in_tx2 = in_tx.clone();
     pool.spawn(move || {
         in_rx.into_iter().par_bridge().for_each_init(
-            || (out_tx.clone(), in_tx2.clone()),
-            |txs, elem| {
-                let (out_tx, in_tx) = txs;
-                if elem == 50000000 {
-                    in_tx.send(elem * 1000).unwrap();
+            || {
+                println!("outer init");
+                out_tx.clone()
+            },
+            |out_tx, elem| {
+                if elem < 5 {
+                    (0..4).into_par_iter().for_each_init(
+                        || {
+                            println!("inner init");
+                            out_tx.clone()
+                        },
+                        |out_tx, i| out_tx.send(i + elem + 100).unwrap(),
+                    );
                 }
                 out_tx.send(elem * 10).unwrap()
             },
