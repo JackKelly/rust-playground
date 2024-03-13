@@ -31,8 +31,15 @@ fn main() {
                 println!("Creating new out_tx clone!");
                 out_tx.clone()
             });
-            out_tx2.send(elem * 10).unwrap()
+            out_tx2.send(elem * 10).unwrap();
+
+            // If this thread's uring can't handle any more ops
+            // then block while we loop round `ring.completion()`,
+            // spawning new tasks if necessary.
         });
+        // Use pool.broadcast to send a closure to all threads.
+        // This closureb blocks in a loop, waiting for all that uring's
+        // tasks_in_flight to complete.
     });
 
     for i in 0..32 {
