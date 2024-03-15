@@ -1,7 +1,6 @@
-use rayon::iter::{IntoParallelIterator, ParallelBridge};
+use rayon::iter::IntoParallelRefIterator;
 use rayon::prelude::ParallelIterator;
 use std::sync::mpsc::channel;
-use thread_local::ThreadLocal;
 
 fn main() {
     let (in_tx, in_rx) = channel();
@@ -10,49 +9,25 @@ fn main() {
         .num_threads(2)
         .build()
         .unwrap();
-    let tls = ThreadLocal::new();
 
     pool.spawn(move || {
-        in_rx.into_iter().par_bridge().for_each(|elem| {
-            // Let's pretend that we've got some additional operations
-            // to add to the task list:
-            if elem < 5 {
-                (0..4).into_par_iter().for_each(|i| {
-                    let out_tx2 = tls.get_or(|| {
-                        println!("Creating new out_tx clone (inner)!");
-                        out_tx.clone()
-                    });
-                    out_tx2.send(i + elem + 100).unwrap()
-                });
-            }
-
-            // We're ready to send a results back:
-            let out_tx2 = tls.get_or(|| {
-                println!("Creating new out_tx clone!");
-                out_tx.clone()
-            });
-            out_tx2.send(elem * 10).unwrap();
-
-            // If this thread's uring can't handle any more ops
-            // then block while we loop round `ring.completion()`,
-            // spawning new tasks if necessary.
+        in_rx.into_iter().for_each(|vec: Vec<i32>| {
+            let out = vec.par_iter().map(|i| i + 1).reduce(|| 0, |a, b| a + b);
+            out_tx.send(out).unwrap();
         });
-        // Use pool.broadcast to send a closure to all threads.
-        // This closureb blocks in a loop, waiting for all that uring's
-        // tasks_in_flight to complete.
     });
 
-    for i in 0..32 {
-        in_tx.send(i).unwrap();
+    for _ in 0..4 {
+        let vec: Vec<i32> = (0..4).collect();
+        in_tx.send(vec).unwrap();
     }
 
     // Finish up:
     drop(in_tx);
 
     for result in out_rx {
-        println!("{result}");
+        println!("{result:?}");
     }
 
     println!("done");
 }
-
