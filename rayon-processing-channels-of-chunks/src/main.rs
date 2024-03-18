@@ -1,6 +1,5 @@
-use rayon::iter::IntoParallelRefIterator;
-use rayon::prelude::ParallelIterator;
-use std::sync::mpsc::channel;
+use rayon::prelude::*;
+use std::sync::mpsc::{channel, Receiver};
 
 fn main() {
     let (in_tx, in_rx) = channel();
@@ -11,15 +10,26 @@ fn main() {
         .unwrap();
 
     pool.spawn(move || {
-        in_rx.into_iter().for_each(|vec: Vec<i32>| {
-            let out = vec.par_iter().map(|i| i + 1).reduce(|| 0, |a, b| a + b);
-            out_tx.send(out).unwrap();
-        });
+        in_rx
+            .into_iter()
+            .par_bridge()
+            .for_each(|inner_rx: Receiver<i32>| {
+                let out = inner_rx
+                    .into_iter()
+                    .par_bridge()
+                    .map(|i| i + 1)
+                    .reduce(|| 0, |a, b| a + b);
+                out_tx.send(out).unwrap();
+            });
     });
 
+    // Submit 'tasks' to `in_tx`.
     for _ in 0..4 {
-        let vec: Vec<i32> = (0..4).collect();
-        in_tx.send(vec).unwrap();
+        let (inner_tx, inner_rx) = channel();
+        for i in 10..14 {
+            inner_tx.send(i).unwrap();
+        }
+        in_tx.send(inner_rx).unwrap();
     }
 
     // Finish up:
