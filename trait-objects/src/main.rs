@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 
 ///--------------- TRAITS THAT DEFINE BEHAVIOUR ---------------------
 ///---------------  COMMON TO ALL I/O BACKENDS  ---------------------
@@ -40,24 +41,16 @@ trait GetRanges<M> {
 
 ///------------ CODE THAT'S SPECIFIC TO A SINGLE I/O BACKEND --------
 ///------------------------------------------------------------------
+
+/// An operation submitted by the user and goes through the channel to the io_uring threadpool:
 #[derive(Debug)]
-struct GetRangesOp<M> {
-    filename: PathBuf, // This will be a CString in the actual io_uring implementation.
-
-    // Information submitted by the user:
-    user_byte_ranges: Vec<Range<isize>>,
-    user_metadata: Option<Vec<M>>,
-    user_buffers: Vec<Option<u8>>,
-
-    // The actual, optimised operations that get submit to io_uring:
-    opt_byte_ranges: Vec<Range<isize>>,
-    opt_buffer_offsets: Vec<Option<isize>>,
-    opt_to_user: Vec<usize>, // Map from the optimised op to the user op.
-    next_to_submit: usize,   // Next optimised operation to submit to uring.
-    n_opt_completed: usize,  // Number of optimised operations that have completed.
+struct GetRangesUserOp<M> {
+    filename: PathBuf, // This will be Arc<CString> in the actual uring implementation.
+    byte_ranges: Vec<Range<isize>>,
+    metadata: Option<Vec<M>>,
 }
 
-impl<M> OperationMarker for GetRangesOp<M> where M: Debug {}
+impl<M> OperationMarker for GetRangesUserOp<M> where M: Debug {}
 
 // Let's say the user asks for one 4 GByte file.
 // Linux cannot load anything larger than 2 GB in one go.
@@ -76,7 +69,7 @@ impl<M> OperationMarker for GetRangesOp<M> where M: Debug {}
 // Some of these chunks are close, so we merge them.
 // The user has asked for only 1,000 buffers to be allocated at any given time.
 //
-impl<M> GetRanges<M> for GetRangesOp<M> {
+impl<M> GetRanges<M> for GetRangesUserOp<M> {
     fn get_ranges(
         filename: PathBuf,
         byte_ranges: Vec<Range<isize>>,
@@ -88,16 +81,37 @@ impl<M> GetRanges<M> for GetRangesOp<M> {
         }
         Self {
             filename,
-            user_byte_ranges: byte_ranges.clone(),
-            user_metadata: metadata,
-            user_buffers: (0..len).map(|_| None).collect(),
-            opt_buffer_offsets: (0..len).map(|_| None).collect(),
-            opt_byte_ranges: byte_ranges,
-            opt_to_user: (0..len).collect(),
-            next_to_submit: 0,
-            n_opt_completed: 0,
+            byte_ranges: byte_ranges.clone(),
+            metadata,
         }
     }
+}
+
+// A single user operation has been split into multiple get operations:
+// For example, a user submitted a 4 GByte file, but Linux cannot read
+// more than 2 GB at once:
+#[derive(Debug)]
+struct SplitGetOp<M> {
+    filename: Arc<PathBuf>,
+    split_byte_ranges: Vec<Range<isize>>,
+    next_to_submit: usize,
+    n_completed: usize,
+
+    // User information
+    user_byte_range: Range<isize>,
+    user_buffer: Vec<u8>,
+    user_metadata: M,
+}
+
+// Multiple user-operations have been merged into a single operation
+struct MergedGetOp<M> {
+    filename: Arc<PathBuf>,
+    merged_byte_range: Range<isize>,
+    merged_buffer: Vec<u8>,
+
+    // User information
+    user_byte_ranges: Vec<Range<isize>>,
+    user_metadata: Vec<M>,
 }
 
 fn main() {
@@ -106,7 +120,7 @@ fn main() {
         Receiver<Box<dyn OperationMarker>>,
     ) = channel();
 
-    let get_ranges_op = GetRangesOp::get_ranges(
+    let get_ranges_op = GetRangesUserOp::get_ranges(
         PathBuf::from("foo/bar"),
         vec![0..100, 500..-1],
         Some(vec![0, 1]),
