@@ -1,6 +1,33 @@
 ```rust
+
+
+/// Traits that define common interface to all IO backends
+
+/// This is all that's required to be implemented to allow a struct
+/// to pass through the Channel to the IO backend.
+trait OperationMarker {}
+
+trait GetRanges {
+    /// If the user submits a GetRanges operation with an invalid filename then
+    /// the user will receive a single Err(std::io::ErrorKind::NotFound) with context
+    /// that describes the filename that failed.
+    /// If a subset of the `byte_ranges` results in an error (e.g. reading beyond
+    /// end of the file) then the user will receive a mixture of `Ok(Output::Buffer)`
+    /// and `Err`, where the `Err` will include context such as the filename and byte_range.
+    fn get_ranges<M>(filename: ObjectStorePath, byte_ranges: Vec<ByteRange<M>>) -> Self;
+}
+
+trait PutRanges {
+    fn put_ranges(filename, byte_ranges, buffers) -> Self<M>;
+}
+
+
 struct ByteRange<M> {
+    // The byte range for the file. The entire file is requested as 0..-1.
     byte_range: Range<isize>,
+
+    // TODO: Maybe we also need a `slices: &[u8]` field, which gives one slice
+    // per `byte_range`, whilst also having a `buffers` field to own the `AlignedBuffer`.
 
     // This buffer is supplied by the user for `PutRanges`.
     // For `GetRanges`, the user cannot provide a buffer. Instead, 
@@ -20,25 +47,8 @@ enum OperationKind {
 
 struct Operation<M> {
     operation_kind: OperationKind,
-    buffers: Option<Vec<AlignedBuffer>>, // For PutRanges
-    byte_ranges: Option<Vec<ByteRange<M>>>,  // For GetRanges and PutRanges
-    filename: CString,  // For GetRanges and PutRanges
-}
-
-impl<M> Operation<M> {
-    /// If the user submits a GetRanges operation with an invalid filename then
-    /// the user will receive a single Err(std::io::ErrorKind::NotFound) with context
-    /// that describes the filename that failed.
-    /// If a subset of the `byte_ranges` results in an error (e.g. reading beyond
-    /// end of the file) then the user will receive a mixture of `Ok(Output::Buffer)`
-    /// and `Err`, where the `Err` will include context such as the filename and byte_range.
-    fn get_ranges(filename, byte_ranges) -> Self<M> {
-    }
-
-    fn put_ranges(filename, byte_ranges, buffers) -> Self<M> {
-        // TODO: Maybe we also need a `slices: &[u8]` field, which gives one slice
-        // per `byte_range`, whilst also having a `buffers` field to own the `AlignedBuffer`.
-    }
+    byte_ranges: Option<Vec<ByteRange<M>>>,
+    filename: CString,
 }
 
 struct OpGroup<M> {
@@ -51,7 +61,6 @@ struct OpGroup<M> {
 struct Output<M> {
     // Each `byte_range` within an `Operation::GetRanges` returns an `Output`.
     operation_kind: OperationKind,
-    buffer: Option<AlignedBuffer>,
     byte_range: Option<ByteRange<M>>,
     // TODO: How to handle outputs from `ls`, `rm`, etc.?
 }
