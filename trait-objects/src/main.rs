@@ -1,9 +1,7 @@
 use std::fmt::Debug;
-use std::iter::zip;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
 
 ///--------------- TRAITS THAT DEFINE BEHAVIOUR ---------------------
 ///---------------  COMMON TO ALL I/O BACKENDS  ---------------------
@@ -33,7 +31,11 @@ trait GetRanges<M> {
     ///
     /// Returns a `Vec` because we may want to split a single large read into multiple
     /// concurrent reads.
-    fn get_ranges(filename: PathBuf, byte_ranges: Vec<Range<isize>>, metadata: Vec<M>) -> Self;
+    fn get_ranges(
+        filename: PathBuf,
+        byte_ranges: Vec<Range<isize>>,
+        metadata: Option<Vec<M>>,
+    ) -> Self;
 }
 
 ///------------ CODE THAT'S SPECIFIC TO A SINGLE I/O BACKEND --------
@@ -41,24 +43,37 @@ trait GetRanges<M> {
 #[derive(Debug)]
 struct GetRangesOp<M> {
     filename: PathBuf, // This will be a CString in the actual io_uring implementation.
-    byte_ranges: Vec<Range<isize>>,
-    metadata: Vec<M>,
-    /// We use an `Option` because each `buffer` starts as `None`.
-    buffers: Vec<Option<u8>>,
+
+    // Information submitted by the user:
+    user_byte_ranges: Vec<Range<isize>>,
+    user_metadata: Option<Vec<M>>,
+    user_buffers: Vec<Option<u8>>,
+
+    // The actual, optimised operations that get submit to io_uring:
+    opt_byte_ranges: Vec<Range<isize>>,
+    opt_buffers: Vec<Option<u8>>,
     next_to_submit: usize,
 }
 
 impl<M> OperationMarker for GetRangesOp<M> where M: Debug {}
 
 impl<M> GetRanges<M> for GetRangesOp<M> {
-    fn get_ranges(filename: PathBuf, byte_ranges: Vec<Range<isize>>, metadata: Vec<M>) -> Self {
-        assert_eq!(byte_ranges.len(), metadata.len());
+    fn get_ranges(
+        filename: PathBuf,
+        byte_ranges: Vec<Range<isize>>,
+        metadata: Option<Vec<M>>,
+    ) -> Self {
         let len = byte_ranges.len();
+        if let Some(metadata_vec) = &metadata {
+            assert_eq!(len, metadata_vec.len());
+        }
         Self {
             filename,
-            byte_ranges,
-            metadata,
-            buffers: (0..len).map(|_| None).collect(),
+            user_byte_ranges: byte_ranges.clone(),
+            user_metadata: metadata,
+            user_buffers: (0..len).map(|_| None).collect(),
+            opt_buffers: (0..len).map(|_| None).collect(),
+            opt_byte_ranges: byte_ranges,
             next_to_submit: 0,
         }
     }
@@ -70,8 +85,11 @@ fn main() {
         Receiver<Box<dyn OperationMarker>>,
     ) = channel();
 
-    let get_ranges_op =
-        GetRangesOp::get_ranges(PathBuf::from("foo/bar"), vec![0..100, 500..-1], vec![0, 1]);
+    let get_ranges_op = GetRangesOp::get_ranges(
+        PathBuf::from("foo/bar"),
+        vec![0..100, 500..-1],
+        Some(vec![0, 1]),
+    );
 
     tx.send(Box::new(get_ranges_op)).unwrap();
 
