@@ -51,12 +51,31 @@ struct GetRangesOp<M> {
 
     // The actual, optimised operations that get submit to io_uring:
     opt_byte_ranges: Vec<Range<isize>>,
-    opt_buffers: Vec<Option<u8>>,
-    next_to_submit: usize,
+    opt_buffer_offsets: Vec<Option<isize>>,
+    opt_to_user: Vec<usize>, // Map from the optimised op to the user op.
+    next_to_submit: usize,   // Next optimised operation to submit to uring.
+    n_opt_completed: usize,  // Number of optimised operations that have completed.
 }
 
 impl<M> OperationMarker for GetRangesOp<M> where M: Debug {}
 
+// Let's say the user asks for one 4 GByte file.
+// Linux cannot load anything larger than 2 GB in one go.
+// But we don't know the size immediately because the user used byte_range=0..-1.
+// The steps will be:
+// 1. Get the filesize from io_uring and, concurrently, open the file.
+// 2. As soon as the filesize is returned, create one 4 GB buffer.
+// 3. Set opt_byte_ranges to [0..2GB, 2GB..4GB].
+// 4. Set opt_buffer_offsets to [0, 2GB].
+// 5. Set opt_to_user to [0, 0].
+// 6. Once the `open` operatoin has completed, submit both `read` operations.
+// 7. When both optimised `read` operations have completed, submit the user_buffer and metadata to the
+//    completion queue.
+//
+// Now let's say that the user asks for 1 million chunks from a single file.
+// Some of these chunks are close, so we merge them.
+// The user has asked for only 1,000 buffers to be allocated at any given time.
+//
 impl<M> GetRanges<M> for GetRangesOp<M> {
     fn get_ranges(
         filename: PathBuf,
@@ -72,9 +91,11 @@ impl<M> GetRanges<M> for GetRangesOp<M> {
             user_byte_ranges: byte_ranges.clone(),
             user_metadata: metadata,
             user_buffers: (0..len).map(|_| None).collect(),
-            opt_buffers: (0..len).map(|_| None).collect(),
+            opt_buffer_offsets: (0..len).map(|_| None).collect(),
             opt_byte_ranges: byte_ranges,
+            opt_to_user: (0..len).collect(),
             next_to_submit: 0,
+            n_opt_completed: 0,
         }
     }
 }
