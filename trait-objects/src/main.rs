@@ -30,9 +30,9 @@ enum IoOperation<M> {
         ///     -100..-1   The last 100 bytes.
         byte_ranges: Vec<Range<isize>>,
         /// metadata used to identify each byte_range.
+        /// One metadata instance per byte_range.
         /// For example, in Zarr, this would be used to identify the
         /// location at which this chunk appears in the merged array.
-        /// One metadata instance per byte_range.
         metadata: Option<Vec<M>>,
     },
     PutRanges {
@@ -118,6 +118,7 @@ trait OptimiseByteRanges<M> {
 
     fn convert_filename(filename: PathBuf) -> Self::FilenameType;
 
+    // A single byte range which has not been split, or merged with other byte ranges.
     fn new_unchanged_byte_range(
         filename: Self::FilenameType,
         byte_range: Range<isize>,
@@ -125,7 +126,7 @@ trait OptimiseByteRanges<M> {
         metadata: Option<M>,
     ) -> Self;
 
-    // A single user operation has been split into multiple get operations.
+    // A single byte range split into multiple byte ranges.
     fn new_split_byte_range(
         filename: Self::FilenameType,
         split_byte_ranges: Vec<Range<isize>>,
@@ -134,7 +135,7 @@ trait OptimiseByteRanges<M> {
         user_metadata: Option<M>,
     ) -> Self;
 
-    // Multiple user-operations have been merged into a single operation
+    // Multiple byte ranges merged into a single byte range.
     fn new_merged_byte_range(
         filename: Self::FilenameType,
         merged_byte_range: Range<isize>,
@@ -178,32 +179,6 @@ enum UringOptimisedByteRanges<M> {
         user_byte_ranges: Vec<Range<isize>>,
         user_metadata: Option<Vec<M>>,
     },
-}
-
-enum UringOperationKind<M> {
-    GetRange {
-        byte_range: UringOptimisedByteRanges<M>,
-        fixed_file_descriptor: Option<usize>, // TODO: Use types::Fixed
-    },
-    PutRange {
-        byte_range: UringOptimisedByteRanges<M>,
-        fixed_file_descriptor: Option<usize>, // TODO: Use types::Fixed
-    },
-}
-
-struct UringOperation<M> {
-    op_kind: UringOperationKind<M>,
-    error_has_occurred: bool,
-    last_cqe: Option<usize>, // TODO: Use cqueue::Entry
-    last_opcode: Option<u8>,
-    n_steps_completed: usize,
-}
-
-impl<M> UringOperation<M> {
-    fn process_cqe(&mut self, cqe: cqueue::Entry);
-    /// If called while `self.last_cqe` is `None`, then returns the first `squeue::Entry`(s).
-    /// If `self.inner.last_cqe` is `Some(cqe)`, then submit further SQEs and/or send result.
-    fn next_step(&mut self, index_of_op: usize) -> NextStep;
 }
 
 impl<M> OptimiseByteRanges<M> for UringOptimisedByteRanges<M> {
@@ -261,6 +236,32 @@ impl<M> OptimiseByteRanges<M> for UringOptimisedByteRanges<M> {
             user_metadata,
         }
     }
+}
+
+enum UringOperationKind<M> {
+    GetRange {
+        byte_range: UringOptimisedByteRanges<M>,
+        fixed_file_descriptor: Option<usize>, // TODO: Use types::Fixed
+    },
+    PutRange {
+        byte_range: UringOptimisedByteRanges<M>,
+        fixed_file_descriptor: Option<usize>, // TODO: Use types::Fixed
+    },
+}
+
+struct UringOperation<M> {
+    op_kind: UringOperationKind<M>,
+    error_has_occurred: bool,
+    last_cqe: Option<usize>, // TODO: Use cqueue::Entry
+    last_opcode: Option<u8>,
+    n_steps_completed: usize,
+}
+
+impl<M> UringOperation<M> {
+    fn process_cqe(&mut self, cqe: cqueue::Entry);
+    /// If called while `self.last_cqe` is `None`, then returns the first `squeue::Entry`(s).
+    /// If `self.inner.last_cqe` is `Some(cqe)`, then submit further SQEs and/or send result.
+    fn next_step(&mut self, index_of_op: usize) -> NextStep;
 }
 
 fn main() {
