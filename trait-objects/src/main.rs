@@ -1,38 +1,16 @@
-use std::fmt::Debug;
+use std::ffi::CString;
+use std::iter::zip;
 use std::ops::Range;
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::channel;
 use std::sync::Arc;
 
-///--------------- TRAITS THAT DEFINE BEHAVIOUR ---------------------
 ///---------------  COMMON TO ALL I/O BACKENDS  ---------------------
 
-trait OperationMarker: Debug {}
-
-enum OptimisedGetRanges<M> {
-    Unchanged {
-        filename: Arc<PathBuf>,
-        byte_range: Range<isize>,
-        metadata: Option<M>,
-    },
-    // A single (large) user op which has been split into smaller ops:
-    Split {
-        filename: Arc<PathBuf>,
-        split_byte_ranges: Vec<Range<isize>>,
-        user_byte_range: Range<isize>,
-        user_metadata: M,
-    },
-    // Multiple small user ops which have been merged into a single op:
-    Merged {
-        filename: Arc<PathBuf>,
-        merged_byte_range: Range<isize>,
-        user_byte_ranges: Vec<Range<isize>>,
-        user_metadata: Vec<M>,
-    },
-}
-
-trait GetRanges<M> {
-    /// `byte_range`:
+#[derive(Debug)]
+enum IoOperation<M> {
+    /// `byte_ranges`:
     /// The byte range for the file. Negative numbers are relative to the filesize.
     /// (Like indexing lists in Python.) For example:
     ///        0..-1   The entire file.
@@ -51,60 +29,25 @@ trait GetRanges<M> {
     /// end of the file) then the user will receive a mixture of `Ok(Output::Buffer)`
     /// and `Err`, where the `Err` will include context such as the filename
     /// and byte_range.
-    ///
-    /// Returns a `Vec` because we may want to split a single large read into multiple
-    /// concurrent reads.
-    fn get_ranges(
-        filename: PathBuf,
+    GetRanges {
+        filename: PathBuf, // Or should we use `object_store::Path`?
         byte_ranges: Vec<Range<isize>>,
+        /// One metadata instance per byte_range.
         metadata: Option<Vec<M>>,
-    ) -> Self;
-
-    // Call some combination of merge and split:
-    fn optimise(&self) -> Vec<OptimisedGetRanges<M>>;
-
-    fn merge(&self, max_gap: usize) -> Vec<OptimisedGetRanges<M>> {
-        // TODO: Provide default impl
-        todo!();
-    }
-
-    fn split(&self, max_file_size: usize) -> Vec<OptimisedGetRanges<M>> {
-        // TODO: Provide default impl
-        todo!();
-    }
-}
-
-///------------ CODE THAT'S SPECIFIC TO A SINGLE I/O BACKEND --------
-///------------------------------------------------------------------
-
-/// An operation submitted by the user and goes through the channel to the io_uring threadpool:
-#[derive(Debug)]
-struct GetRangesUserOp<M> {
-    filename: PathBuf, // This will be Arc<CString> in the actual uring implementation.
-    byte_ranges: Vec<Range<isize>>,
-    metadata: Option<Vec<M>>,
-}
-
-impl<M> OperationMarker for GetRangesUserOp<M> where M: Debug {}
-
-impl<M> GetRanges<M> for GetRangesUserOp<M> {
-    fn get_ranges(
-        filename: PathBuf,
+    },
+    PutRanges {
+        filename: PathBuf, // Or should we use `object_store::Path`?
         byte_ranges: Vec<Range<isize>>,
+        /// One metadata instance per byte_range.
+        /// TODO: Do we need `metadata` when writing? Maybe not??
         metadata: Option<Vec<M>>,
-    ) -> Self {
-        let len = byte_ranges.len();
-        if let Some(metadata_vec) = &metadata {
-            assert_eq!(len, metadata_vec.len());
-        }
-        Self {
-            filename,
-            byte_ranges: byte_ranges.clone(),
-            metadata,
-        }
-    }
+        /// One buffer per byte_range.
+        buffers: Vec<Vec<u8>>,
+    },
 }
 
+// TODO: Update this text!
+//
 // Once the GetRangesUserOp passes to the uring threadpool,
 // the first worker thread which grabs this GetRangesUserOp
 // will get the filesize (if necessary) and then optimise the byte_ranges and submit some
@@ -136,56 +79,173 @@ impl<M> GetRanges<M> for GetRangesUserOp<M> {
 // 3. Each MergedGetOp just submits a single read to uring,
 // and when that read completes, it submits read-only slices (but how to keep the buffer alive, if
 // we're only passing back &[u8]? Maybe use Bytes?).
+trait OptimiseByteRanges<M> {
+    type FilenameType: Clone;
+    fn optimise(io_operation: IoOperation<M>, max_gap: usize, max_file_size: usize) -> Vec<Self>
+    where
+        Self: Sized,
+    {
+        // TODO: Implement generic optimisation. Use the methods below (`new_unchanged_byte_range`
+        // etc.) to create the backend-specific enum variants.
+        match io_operation {
+            IoOperation::GetRanges {
+                filename,
+                byte_ranges,
+                metadata,
+            } => {
+                // TODO: Handle case when metadata is None.
+                let filename = Self::convert_filename(filename);
+                zip(byte_ranges, metadata.unwrap())
+                    .map(|(byte_range, meta)| {
+                        Self::new_unchanged_byte_range(
+                            filename.clone(),
+                            byte_range,
+                            None,
+                            Some(meta),
+                        )
+                    })
+                    .collect()
+            }
+            IoOperation::PutRanges {
+                filename,
+                byte_ranges,
+                metadata,
+                buffers,
+            } => todo!(),
+        }
+    }
 
-struct UnchangedGetOp<M> {
-    filename: Arc<PathBuf>,
-    byte_range: Range<isize>,
-    buffer: Option<Vec<u8>>,
-    metadata: Option<M>,
+    fn convert_filename(filename: PathBuf) -> Self::FilenameType;
+
+    fn new_unchanged_byte_range(
+        filename: Self::FilenameType,
+        byte_range: Range<isize>,
+        buffer: Option<Vec<u8>>,
+        metadata: Option<M>,
+    ) -> Self;
+
+    // A single user operation has been split into multiple get operations.
+    fn new_split_byte_range(
+        filename: Self::FilenameType,
+        split_byte_ranges: Vec<Range<isize>>,
+        user_byte_range: Range<isize>,
+        user_buffer: Option<Vec<u8>>,
+        user_metadata: Option<M>,
+    ) -> Self;
+
+    // Multiple user-operations have been merged into a single operation
+    fn new_merged_byte_range(
+        filename: Self::FilenameType,
+        merged_byte_range: Range<isize>,
+        merged_buffer: Option<Vec<u8>>,
+        user_byte_ranges: Vec<Range<isize>>,
+        user_metadata: Option<Vec<M>>,
+    ) -> Self;
 }
 
-// A single user operation has been split into multiple get operations:
-// For example, a user submitted a 4 GByte file, but Linux cannot read
-// more than 2 GB at once.
-// Each `SplitGetOp` will be processed by only one uring thread, so we don't
-// need any locks.
-#[derive(Debug)]
-struct SplitGetOp<M> {
-    filename: Arc<PathBuf>,
-    split_byte_ranges: Vec<Range<isize>>,
-    next_to_submit: usize,
-    n_completed: usize,
+///--------------------- URING-SPECIFIC CODE ------------------------
+enum UringOptimisedByteRanges<M> {
+    Unchanged {
+        filename: Arc<CString>,
+        byte_range: Range<isize>,
+        buffer: Option<Vec<u8>>,
+        metadata: Option<M>,
+    },
 
-    // User information
-    user_byte_range: Range<isize>,
-    user_buffer: Vec<u8>,
-    user_metadata: M,
+    // A single user operation has been split into multiple get operations.
+    // For example, a user submitted a 4 GByte file, but Linux cannot read more than 2 GB at once.
+    // Each `Split` will be processed by only one worker thread, so we don't need locks.
+    Split {
+        filename: Arc<CString>,
+        split_byte_ranges: Vec<Range<isize>>,
+        next_to_submit: usize,
+        n_completed: usize,
+
+        // User information
+        user_byte_range: Range<isize>,
+        user_buffer: Option<Vec<u8>>,
+        user_metadata: Option<M>,
+    },
+
+    // Multiple user-operations have been merged into a single operation
+    Merged {
+        filename: Arc<CString>,
+        merged_byte_range: Range<isize>,
+        merged_buffer: Option<Vec<u8>>,
+
+        // User information
+        user_byte_ranges: Vec<Range<isize>>,
+        user_metadata: Option<Vec<M>>,
+    },
 }
 
-// Multiple user-operations have been merged into a single operation
-struct MergedGetOp<M> {
-    filename: Arc<PathBuf>,
-    merged_byte_range: Range<isize>,
-    merged_buffer: Vec<u8>,
+impl<M> OptimiseByteRanges<M> for UringOptimisedByteRanges<M> {
+    type FilenameType = Arc<CString>;
 
-    // User information
-    user_byte_ranges: Vec<Range<isize>>,
-    user_metadata: Vec<M>,
+    fn convert_filename(filename: PathBuf) -> Self::FilenameType {
+        Arc::new(
+            CString::new(filename.as_os_str().as_bytes())
+                .expect("Failed to convert filename {filename} to CString."),
+        )
+    }
+
+    fn new_unchanged_byte_range(
+        filename: Self::FilenameType,
+        byte_range: Range<isize>,
+        buffer: Option<Vec<u8>>,
+        metadata: Option<M>,
+    ) -> Self {
+        Self::Unchanged {
+            filename,
+            byte_range,
+            buffer,
+            metadata,
+        }
+    }
+    fn new_split_byte_range(
+        filename: Self::FilenameType,
+        split_byte_ranges: Vec<Range<isize>>,
+        user_byte_range: Range<isize>,
+        user_buffer: Option<Vec<u8>>,
+        user_metadata: Option<M>,
+    ) -> Self {
+        Self::Split {
+            filename,
+            split_byte_ranges,
+            next_to_submit: 0,
+            n_completed: 0,
+            user_byte_range,
+            user_buffer,
+            user_metadata,
+        }
+    }
+    fn new_merged_byte_range(
+        filename: Self::FilenameType,
+        merged_byte_range: Range<isize>,
+        merged_buffer: Option<Vec<u8>>,
+        user_byte_ranges: Vec<Range<isize>>,
+        user_metadata: Option<Vec<M>>,
+    ) -> Self {
+        Self::Merged {
+            filename,
+            merged_byte_range,
+            merged_buffer,
+            user_byte_ranges,
+            user_metadata,
+        }
+    }
 }
 
 fn main() {
-    let (tx, rx): (
-        Sender<Box<dyn OperationMarker>>,
-        Receiver<Box<dyn OperationMarker>>,
-    ) = channel();
+    let (tx, rx) = channel();
 
-    let get_ranges_op = GetRangesUserOp::get_ranges(
-        PathBuf::from("foo/bar"),
-        vec![0..100, 500..-1],
-        Some(vec![0, 1]),
-    );
+    let get_ranges_op = IoOperation::GetRanges {
+        filename: PathBuf::from("foo/bar"),
+        byte_ranges: vec![0..100, 500..-1],
+        metadata: Some(vec![0, 1]),
+    };
 
-    tx.send(Box::new(get_ranges_op)).unwrap();
+    tx.send(get_ranges_op).unwrap();
 
     let recv = rx.recv().unwrap();
     println!("{recv:?}");
