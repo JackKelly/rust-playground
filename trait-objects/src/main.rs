@@ -8,18 +8,10 @@ use std::sync::Arc;
 
 ///---------------  COMMON TO ALL I/O BACKENDS  ---------------------
 
+/// IO Operations (common to all I/O backends).
 #[derive(Debug)]
 enum IoOperation<M> {
-    /// `byte_ranges`:
-    /// The byte range for the file. Negative numbers are relative to the filesize.
-    /// (Like indexing lists in Python.) For example:
-    ///        0..-1   The entire file.
-    ///        0..100  The first 100 bytes.
-    ///     -100..-1   The last 100 bytes.
-    ///
-    /// `metadata`: Use to identify each byte_range.
-    /// For example, in Zarr, this would be used to identify the
-    /// location at which this chunk appears in the merged array.
+    /// Submit a GetRanges operation.
     ///
     /// # Errors:
     /// If the user submits a GetRanges operation with an invalid filename then
@@ -31,7 +23,15 @@ enum IoOperation<M> {
     /// and byte_range.
     GetRanges {
         filename: PathBuf, // Or should we use `object_store::Path`?
+        /// The byte ranges for the file. Negative numbers are relative to the filesize.
+        /// (Like indexing lists in Python.) For example:
+        ///        0..-1   The entire file.
+        ///        0..100  The first 100 bytes.
+        ///     -100..-1   The last 100 bytes.
         byte_ranges: Vec<Range<isize>>,
+        /// metadata used to identify each byte_range.
+        /// For example, in Zarr, this would be used to identify the
+        /// location at which this chunk appears in the merged array.
         /// One metadata instance per byte_range.
         metadata: Option<Vec<M>>,
     },
@@ -85,8 +85,9 @@ trait OptimiseByteRanges<M> {
     where
         Self: Sized,
     {
-        // TODO: Implement generic optimisation. Use the methods below (`new_unchanged_byte_range`
-        // etc.) to create the backend-specific enum variants.
+        // TODO: Implement optimisation. Use the methods below (`new_unchanged_byte_range`
+        // etc.) to create the backend-specific enum variants. For now, I'm just creating
+        // a "stub" by always returning `Unchanged`.
         match io_operation {
             IoOperation::GetRanges {
                 filename,
@@ -177,6 +178,32 @@ enum UringOptimisedByteRanges<M> {
         user_byte_ranges: Vec<Range<isize>>,
         user_metadata: Option<Vec<M>>,
     },
+}
+
+enum UringOperationKind<M> {
+    GetRange {
+        byte_range: UringOptimisedByteRanges<M>,
+        fixed_file_descriptor: Option<usize>, // TODO: Use types::Fixed
+    },
+    PutRange {
+        byte_range: UringOptimisedByteRanges<M>,
+        fixed_file_descriptor: Option<usize>, // TODO: Use types::Fixed
+    },
+}
+
+struct UringOperation<M> {
+    op_kind: UringOperationKind<M>,
+    error_has_occurred: bool,
+    last_cqe: Option<usize>, // TODO: Use cqueue::Entry
+    last_opcode: Option<u8>,
+    n_steps_completed: usize,
+}
+
+impl<M> UringOperation<M> {
+    fn process_cqe(&mut self, cqe: cqueue::Entry);
+    /// If called while `self.last_cqe` is `None`, then returns the first `squeue::Entry`(s).
+    /// If `self.inner.last_cqe` is `Some(cqe)`, then submit further SQEs and/or send result.
+    fn next_step(&mut self, index_of_op: usize) -> NextStep;
 }
 
 impl<M> OptimiseByteRanges<M> for UringOptimisedByteRanges<M> {
