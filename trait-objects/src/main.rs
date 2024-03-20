@@ -1,3 +1,4 @@
+use anyhow::Result;
 use io_uring::{cqueue, squeue};
 use std::ffi::CString;
 use std::iter::zip;
@@ -248,7 +249,7 @@ impl<M> OptimiseByteRanges<M> for UringOptimisedByteRanges<M> {
     }
 }
 
-enum UringOperationKind<M> {
+enum UringOperation<M> {
     GetRange {
         byte_range: UringOptimisedByteRanges<M>,
         fixed_file_descriptor: Option<usize>, // TODO: Use types::Fixed
@@ -259,17 +260,6 @@ enum UringOperationKind<M> {
     },
 }
 
-struct UringOperation<M> {
-    op_kind: UringOperationKind<M>,
-    // TODO: I think we might be able to get rid of all of this state, with better design :)
-    // e.g. replacing `process_cqe` and `next_step` with a single method
-    // `process_cqe_and_get_next_step`.
-    error_has_occurred: bool,
-    last_cqe: Option<usize>, // TODO: Use cqueue::Entry
-    last_opcode: Option<u8>,
-    n_steps_completed: usize,
-}
-
 enum NextStep<M> {
     SubmitEntries {
         entries: Vec<squeue::Entry>,
@@ -277,23 +267,68 @@ enum NextStep<M> {
         register_file: bool,
     },
     Pending {
-        output: Option<IoOutput<M>>,
+        output: Option<Result<IoOutput<M>>>,
     },
     // We're done! Remove this operation from the list of ops in flight.
     Done {
         // If true, the the CQE reports that it's unregistered one file.
         unregister_file: bool,
-        output: Option<IoOutput<M>>,
+        output: Option<Result<IoOutput<M>>>,
     },
 }
 
 impl<M> UringOperation<M> {
-    fn process_cqe_and_get_next_step(
-        &mut self,
-        cqe: cqueue::Entry,
-        index_of_op: usize,
+    fn get_first_step(&self, index_of_op: usize) -> NextStep<M> {
+        match &self {
+            Self::GetRange {
+                byte_range,
+                fixed_file_descriptor,
+            } => todo!(),
+            Self::PutRange {
+                byte_range,
+                fixed_file_descriptor,
+            } => todo!(),
+        }
+    }
+
+    fn process_cqe_and_get_next_step(&self, cqe: cqueue::Entry, index_of_op: usize) -> NextStep<M> {
+        let opcode = get_opcode_from_user_data(cqe.user_data());
+
+        // Check if the CQE reports an error. We can't return the error yet
+        // because we need to know if we're expecting any more CQEs associated with this operation.
+        // NOTE: A big improvement over the previous version of the code is that we can now send
+        // every error that occurs (because we now have a limitless output Channel)!
+        let maybe_error = cqe_error_to_anyhow_error(cqe.result());
+
+        match &self {
+            Self::GetRange {
+                byte_range,
+                fixed_file_descriptor,
+            } => self.process_cqe_for_get_range(
+                byte_range,
+                fixed_file_descriptor,
+                opcode,
+                maybe_error,
+            ),
+            Self::PutRange {
+                byte_range,
+                fixed_file_descriptor,
+            } => self.process_cqe_for_put_range(
+                byte_range,
+                fixed_file_descriptor,
+                opcode,
+                maybe_error,
+            ),
+        }
+    }
+
+    fn process_cqe_for_get_range(
+        &self,
+        byte_range: UringOptimisedByteRanges<M>,
+        fixed_file_descriptor: Option<usize>,
+        opcode: u8,
+        maybe_error: Some(Error),
     ) -> NextStep<M> {
-        todo!();
     }
 }
 
