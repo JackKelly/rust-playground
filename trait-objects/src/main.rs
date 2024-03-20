@@ -1,3 +1,4 @@
+use io_uring::{cqueue, squeue};
 use std::ffi::CString;
 use std::iter::zip;
 use std::ops::Range;
@@ -7,6 +8,18 @@ use std::sync::mpsc::channel;
 use std::sync::Arc;
 
 ///---------------  COMMON TO ALL I/O BACKENDS  ---------------------
+
+/// This is the atomic buffer of data passed around, throughout the LSIO stack.
+#[derive(Debug)]
+struct Chunk<M> {
+    buffer: Vec<u8>, // TODO: Use `AlignedBuffer` or `Bytes`.
+    metadata: M,
+}
+
+#[derive(Debug)]
+enum IoOutput<M> {
+    Chunk(Chunk<M>),
+}
 
 /// IO Operations (common to all I/O backends).
 #[derive(Debug)]
@@ -38,11 +51,9 @@ enum IoOperation<M> {
     PutRanges {
         filename: PathBuf, // Or should we use `object_store::Path`?
         byte_ranges: Vec<Range<isize>>,
-        /// One metadata instance per byte_range.
+        /// Chunks of data to be written to IO.
         /// TODO: Do we need `metadata` when writing? Maybe not??
-        metadata: Option<Vec<M>>,
-        /// One buffer per byte_range.
-        buffers: Vec<Vec<u8>>,
+        chunks: Vec<Chunk<M>>,
     },
 }
 
@@ -110,8 +121,7 @@ trait OptimiseByteRanges<M> {
             IoOperation::PutRanges {
                 filename,
                 byte_ranges,
-                metadata,
-                buffers,
+                chunks,
             } => todo!(),
         }
     }
@@ -251,17 +261,40 @@ enum UringOperationKind<M> {
 
 struct UringOperation<M> {
     op_kind: UringOperationKind<M>,
+    // TODO: I think we might be able to get rid of all of this state, with better design :)
+    // e.g. replacing `process_cqe` and `next_step` with a single method
+    // `process_cqe_and_get_next_step`.
     error_has_occurred: bool,
     last_cqe: Option<usize>, // TODO: Use cqueue::Entry
     last_opcode: Option<u8>,
     n_steps_completed: usize,
 }
 
+enum NextStep<M> {
+    SubmitEntries {
+        entries: Vec<squeue::Entry>,
+        // If true, then these squeue entries will register one file.
+        register_file: bool,
+    },
+    Pending {
+        output: Option<IoOutput<M>>,
+    },
+    // We're done! Remove this operation from the list of ops in flight.
+    Done {
+        // If true, the the CQE reports that it's unregistered one file.
+        unregister_file: bool,
+        output: Option<IoOutput<M>>,
+    },
+}
+
 impl<M> UringOperation<M> {
-    fn process_cqe(&mut self, cqe: cqueue::Entry);
-    /// If called while `self.last_cqe` is `None`, then returns the first `squeue::Entry`(s).
-    /// If `self.inner.last_cqe` is `Some(cqe)`, then submit further SQEs and/or send result.
-    fn next_step(&mut self, index_of_op: usize) -> NextStep;
+    fn process_cqe_and_get_next_step(
+        &mut self,
+        cqe: cqueue::Entry,
+        index_of_op: usize,
+    ) -> NextStep<M> {
+        todo!();
+    }
 }
 
 fn main() {
