@@ -273,7 +273,7 @@ enum NextStep<M> {
     },
     // We're done! Remove this operation from the list of ops in flight.
     Done {
-        // If true, the the CQE reports that it's unregistered one file.
+        // true means that the CQE reports that it has unregistered one file.
         unregister_file: bool,
         output: Option<IoOutput<M>>,
     },
