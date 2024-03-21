@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Error, Result};
 use io_uring::{cqueue, squeue};
 use std::ffi::CString;
 use std::iter::zip;
@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 ///---------------  COMMON TO ALL I/O BACKENDS  ---------------------
 
-/// This is the atomic buffer of data passed around, throughout the LSIO stack.
+/// `Chunk` is used throughout the LSIO stack. It is the unit of data that's passed from the I/O
+/// layer, to the compute layer, and to the application layer.
 #[derive(Debug)]
 struct Chunk<M> {
     buffer: Vec<u8>, // TODO: Use `AlignedBuffer` or `Bytes`.
@@ -137,7 +138,7 @@ trait OptimiseByteRanges<M> {
         metadata: Option<M>,
     ) -> Self;
 
-    // A single byte range split into multiple byte ranges.
+    // A single. large byte range split into multiple, smaller byte ranges.
     fn new_split_byte_range(
         filename: Self::FilenameType,
         split_byte_ranges: Vec<Range<isize>>,
@@ -146,7 +147,7 @@ trait OptimiseByteRanges<M> {
         user_metadata: Option<M>,
     ) -> Self;
 
-    // Multiple byte ranges merged into a single byte range.
+    // Multiple byte ranges merged into a single, large byte range.
     fn new_merged_byte_range(
         filename: Self::FilenameType,
         merged_byte_range: Range<isize>,
@@ -260,6 +261,7 @@ enum UringOperation<M> {
     },
 }
 
+#[derive(Debug)]
 enum NextStep<M> {
     SubmitEntries {
         entries: Vec<squeue::Entry>,
@@ -267,13 +269,13 @@ enum NextStep<M> {
         register_file: bool,
     },
     Pending {
-        output: Option<Result<IoOutput<M>>>,
+        output: Option<IoOutput<M>>,
     },
     // We're done! Remove this operation from the list of ops in flight.
     Done {
         // If true, the the CQE reports that it's unregistered one file.
         unregister_file: bool,
-        output: Option<Result<IoOutput<M>>>,
+        output: Option<IoOutput<M>>,
     },
 }
 
@@ -291,7 +293,14 @@ impl<M> UringOperation<M> {
         }
     }
 
-    fn process_cqe_and_get_next_step(&self, cqe: cqueue::Entry, index_of_op: usize) -> NextStep<M> {
+    /// # Errors:
+    /// If io_uring reports an error, then this function will return an `std::io::Error` with the
+    /// context set twice: First to the `UringOperation`, and then to the `NextStep`.
+    fn process_cqe_and_get_next_step(
+        &self,
+        cqe: cqueue::Entry,
+        index_of_op: usize,
+    ) -> Result<NextStep<M>> {
         let opcode = get_opcode_from_user_data(cqe.user_data());
 
         // Check if the CQE reports an error. We can't return the error yet
@@ -327,8 +336,9 @@ impl<M> UringOperation<M> {
         byte_range: UringOptimisedByteRanges<M>,
         fixed_file_descriptor: Option<usize>,
         opcode: u8,
-        maybe_error: Some(Error),
-    ) -> NextStep<M> {
+        maybe_error: Option<Error>,
+    ) -> Result<NextStep<M>> {
+        todo!();
     }
 }
 
