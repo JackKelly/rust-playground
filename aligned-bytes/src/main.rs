@@ -54,4 +54,6 @@ fn main() {
     (0..HALF_WAY)
         .into_iter()
         .for_each(|i| assert_eq!(second_half[i], (i + HALF_WAY) as u8));
+
+    println!("{}", 0x1);
 }
