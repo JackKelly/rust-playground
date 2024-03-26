@@ -29,6 +29,10 @@ fn main() {
     let elapsed = start.elapsed();
 
     // Results
-    println!("Found {} primes", primes.len());
-    println!("Calculated in {:.4} seconds", elapsed.as_secs_f32());
+    println!(
+        "Found {} primes, out of {} candidates.",
+        primes.len(),
+        candidates.len()
+    );
+    println!("Calculated in {:.4} seconds.", elapsed.as_secs_f32());
 }
