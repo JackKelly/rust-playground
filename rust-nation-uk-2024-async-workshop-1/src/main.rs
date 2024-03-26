@@ -27,9 +27,8 @@ fn main() {
     // The Arc isn't actually useful yet!
     let primes: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let num_threads = usize::max(num_cpus::get() - 1, 1);
     thread::scope(|scope| {
-        let chunks = candidates.chunks(candidates.len() / num_threads);
+        let chunks = candidates.chunks(candidates.len() / num_cpus::get());
 
         // Iterate each chunk
         for chunk in chunks {
