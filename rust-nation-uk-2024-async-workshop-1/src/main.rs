@@ -19,24 +19,18 @@ fn is_prime(n: usize) -> bool {
 
 fn main() {
     let candidates: Vec<usize> = (0..MAX_NUMBER).collect();
-    // Perform the calculation
     let start = Instant::now(); // We're not timing the initial creation
-                                //
 
+    // Perform the calculation
     let primes = candidates
-        .par_iter()
-        .filter(|n| is_prime(**n))
-        .map(|n| *n)
+        .into_par_iter()
+        .filter(|n| is_prime(*n))
         .collect::<Vec<usize>>();
 
     // Time how long it took
     let elapsed = start.elapsed();
 
     // Results
-    println!(
-        "Found {} primes, out of {} candidates.",
-        primes.len(),
-        candidates.len()
-    );
+    println!("Found {} primes.", primes.len(),);
     println!("Calculated in {:.4} seconds.", elapsed.as_secs_f32());
 }
