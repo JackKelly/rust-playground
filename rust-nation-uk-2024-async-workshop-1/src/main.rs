@@ -1,3 +1,4 @@
+use rand::seq::SliceRandom;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
@@ -19,8 +20,8 @@ fn is_prime(n: usize) -> bool {
 }
 
 fn main() {
-    let candidates: Vec<usize> = (0..MAX_NUMBER).collect();
-
+    let mut candidates: Vec<usize> = (0..MAX_NUMBER).collect();
+    candidates.shuffle(&mut rand::thread_rng());
     // Perform the calculation
     let start = Instant::now(); // We're not timing the initial creation
 
