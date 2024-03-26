@@ -21,10 +21,11 @@ fn is_prime(n: usize) -> bool {
 
 fn main() {
     let mut candidates: Vec<usize> = (0..MAX_NUMBER).collect();
-    candidates.shuffle(&mut rand::thread_rng());
     // Perform the calculation
     let start = Instant::now(); // We're not timing the initial creation
 
+    // Shuffle, so that the work is more evenly distributed between threads:
+    candidates.shuffle(&mut rand::thread_rng());
     // The Arc isn't actually useful yet!
     let primes: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
 
