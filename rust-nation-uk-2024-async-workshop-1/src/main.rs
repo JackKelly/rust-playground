@@ -42,11 +42,13 @@ fn main() {
                 let local_results: Vec<usize> =
                     chunk.iter().filter(|n| is_prime(**n)).map(|n| *n).collect();
 
-                // Lock the shared results list
-                let mut lock = my_primes.lock().unwrap();
+                {
+                    // Lock the shared results list
+                    let mut lock = my_primes.lock().unwrap();
 
-                // Extend the results with this thread's primes
-                lock.extend(local_results);
+                    // Extend the results with this thread's primes
+                    lock.extend(local_results);
+                }
 
                 let chunk_elapsed = chunk_start.elapsed();
                 println!(
