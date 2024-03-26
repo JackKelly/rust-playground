@@ -1,5 +1,8 @@
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Instant;
 
+const NUM_THREADS: usize = 4;
 const MAX_NUMBER: usize = 100_000;
 
 /// Really inefficient prime number calculator
@@ -21,17 +24,36 @@ fn main() {
 
     // Perform the calculation
     let start = Instant::now(); // We're not timing the initial creation
-    let primes: Vec<usize> = candidates
-        .iter()
-        .filter(|n| is_prime(**n))
-        .map(|n| *n)
-        .collect();
+
+    // The Arc isn't actually useful yet!
+    let primes: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
+
+    thread::scope(|scope| {
+        let chunks = candidates.chunks(candidates.len() / NUM_THREADS);
+
+        // Iterate each chunk
+        for chunk in chunks {
+            let my_primes = primes.clone();
+            scope.spawn(move || {
+                let local_results: Vec<usize> =
+                    chunk.iter().filter(|n| is_prime(**n)).map(|n| *n).collect();
+
+                // Lock the shared results list
+                let mut lock = my_primes.lock().unwrap();
+
+                // Extend the results with this thread's primes
+                lock.extend(local_results);
+            });
+        }
+    });
+    // Time how long it took
     let elapsed = start.elapsed();
 
     // Results
+    let lock = primes.lock().unwrap();
     println!(
         "Found {} primes, out of {} candidates.",
-        primes.len(),
+        lock.len(),
         candidates.len()
     );
     println!("Calculated in {:.4} seconds.", elapsed.as_secs_f32());
