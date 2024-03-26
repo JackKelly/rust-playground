@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
-const NUM_THREADS: usize = 4;
 const MAX_NUMBER: usize = 100_000;
 
 /// Really inefficient prime number calculator
@@ -29,7 +28,7 @@ fn main() {
     let primes: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
 
     thread::scope(|scope| {
-        let chunks = candidates.chunks(candidates.len() / NUM_THREADS);
+        let chunks = candidates.chunks(candidates.len() / num_cpus::get());
 
         // Iterate each chunk
         for chunk in chunks {
