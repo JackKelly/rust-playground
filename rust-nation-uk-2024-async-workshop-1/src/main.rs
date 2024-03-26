@@ -1,5 +1,6 @@
 use rand::seq::SliceRandom;
 use std::thread;
+use std::time::Duration;
 use std::time::Instant;
 
 const MAX_NUMBER: usize = 100_000;
@@ -27,6 +28,7 @@ fn main() {
     candidates.shuffle(&mut rand::thread_rng());
     let mut primes: Vec<usize> = Vec::with_capacity(10_000);
 
+    let mut extend_time = Duration::ZERO;
     thread::scope(|scope| {
         let mut handles = Vec::with_capacity(num_cpus::get());
 
@@ -54,7 +56,9 @@ fn main() {
 
         for handle in handles {
             let local_result: Vec<usize> = handle.join().unwrap();
+            let extend_start = Instant::now();
             primes.extend(local_result);
+            extend_time += extend_start.elapsed();
         }
     });
     // Time how long it took
@@ -67,4 +71,8 @@ fn main() {
         candidates.len()
     );
     println!("Calculated in {:.4} seconds.", elapsed.as_secs_f32());
+    println!(
+        "Vec::extend() took a total of: {:.4} microsecs.",
+        extend_time.as_micros()
+    );
 }
