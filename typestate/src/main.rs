@@ -2,27 +2,26 @@ struct Operation<S: IoState> {
     marker: std::marker::PhantomData<S>,
 }
 
-trait IoState: Sized {}
-enum GetRangesRead {}
-enum GetRangesClose {}
-impl IoState for GetRangesRead {}
-impl IoState for GetRangesClose {}
+enum IoState {
+    GetRangesRead,
+    GetRangesClose,
+}
 
-impl Operation<GetRangesRead> {
+impl Operation<IoState::GetRangesRead> {
     fn foo() {}
 }
 
-impl Operation<GetRangesClose> {
+impl Operation<IoState::GetRangesClose> {
     fn boo() {}
 }
 
 fn main() {
-    let read_op: Operation<GetRangesRead> = Operation {
+    let read_op: Operation<IoState::GetRangesRead> = Operation {
         marker: std::marker::PhantomData,
     };
-    let close_op: Operation<GetRangesClose> = Operation {
+    let close_op: Operation<IoState::GetRangesClose> = Operation {
         marker: std::marker::PhantomData,
     };
 
-    let v: Vec<Box<Operation<dyn IoState>>> = vec![Box::new(read_op), Box::new(close_op)];
+    let v = vec![read_op, close_op];
 }
