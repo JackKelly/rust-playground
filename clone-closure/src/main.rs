@@ -1,16 +1,17 @@
 use std::{
-    sync::mpsc,
+    sync::{mpsc, Arc},
     thread::{self, JoinHandle},
 };
 
 fn run_closure_on_multiple_threads<F>(f: F) -> Vec<JoinHandle<()>>
 where
-    F: Fn() + Clone + Send + 'static,
+    F: Fn() + Send + Sync + 'static,
 {
+    let f = Arc::new(f);
     const N_THREADS: usize = 4;
     (0..N_THREADS)
         .map(|_| {
-            let f_clone = f.clone();
+            let f_clone = Arc::clone(&f);
             thread::spawn(move || (f_clone)())
         })
         .collect()
