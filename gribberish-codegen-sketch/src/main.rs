@@ -20,18 +20,12 @@ impl Category {
     }
 }
 
-trait Parameter: Send + Sync {
-    pub fn abbrev(&self) -> &'static str;
-    pub fn name(&self) -> &'static str;
-    pub fn unit(&self) -> &'static str;
-}
-
 // The `Parameter` enum variant names would be derived from the `name` field in the GDAL CSVs,
 // with the strings turned into CammelCase, and the whitespace removed, and ignoring rows where
 // the `name` contains "Reserved". Maybe this single enum would contain _all_ parameters
 // (for all categories)?
 #[derive(num_derive::FromPrimitive)]
-enum TemperatureProduct {
+enum Parameter {
     Temperature,
     VirtualTemperature,
     PotentialTemperature,
@@ -44,35 +38,38 @@ enum TemperatureProduct {
     // etc.
 }
 
-impl Parameter for TemperatureProduct {
-    fn abbrev(&self) -> &'static str {
+use Parameter::*;
+
+impl Parameter {
+    #[no_mangle] // Required when viewing this in godbolt.org
+    pub fn abbrev(&self) -> &'static str {
         // This gets compiled to a jump table, which is O(1). See:
         // https://www.reddit.com/r/rust/comments/31kras/are_match_statements_constanttime_operations/
         match *self {
-            Self::Temperature => "TMP",
-            Self::VirtualTemperature => "VTMP",
-            Self::PotentialTemperature => "POT",
-            Self::PseudoAdiabaticPotentialTemperature => "EPOT",
-            Self::MaximumTemperature => "TMAX",
-            Self::MinimumTemperature => "TMIN",
-            Self::DewPointTemperature => "DPT",
-            Self::DewPointDepression => "DEPR",
-            Self::LapseRate => "LAPR",
+            Temperature => "TMP",
+            VirtualTemperature => "VTMP",
+            PotentialTemperature => "POT",
+            PseudoAdiabaticPotentialTemperature => "EPOT",
+            MaximumTemperature => "TMAX",
+            MinimumTemperature => "TMIN",
+            DewPointTemperature => "DPT",
+            DewPointDepression => "DEPR",
+            LapseRate => "LAPR",
             // etc.
         }
     }
 
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match *self {
-            Self::Temperature => "Temperature",
-            Self::VirtualTemperature => "Virtual temperature",
+            Temperature => "Temperature",
+            VirtualTemperature => "Virtual temperature",
             _ => todo!(), // etc...
         }
     }
 
-    fn unit(&self) -> &'static str {
-        match &self {
-            Self::Temperature => "K",
+    pub fn category(&self) -> Category {
+        match *self {
+            Temperature | VirtualTemperature | PotentialTemperature => Category::Temperature,
             _ => todo!(),
         }
     }
@@ -80,16 +77,16 @@ impl Parameter for TemperatureProduct {
 
 // `phf::Map` is compiled to a perfect hash table, which is O(1). In contrast,
 // matching strings compiles code which checks each string in turn, which is O(n).
-static ABBREV_TO_PRODUCT_VARIANT: phf::Map<&'static str, Box<dyn Parameter>> = phf::phf_map! {
-    "TMP" => Box::new(TemperatureProduct::Temperature),
-    "VTMP" => Box::new(TemperatureProduct::VirtualTemperature),
-    "POT" => Box::new(TemperatureProduct::PotentialTemperature),
-    "EPOT" => Box::new(TemperatureProduct::PseudoAdiabaticPotentialTemperature),
-    "TMAX" => Box::new(TemperatureProduct::MaximumTemperature),
-    "TMIN" => Box::new(TemperatureProduct::MinimumTemperature),
-    "DPT" => Box::new(TemperatureProduct::DewPointTemperature),
-    "DEPR" => Box::new(TemperatureProduct::DewPointDepression),
-    "LAPR" => Box::new(TemperatureProduct::LapseRate),
+static ABBREV_TO_PRODUCT_VARIANT: phf::Map<&'static str, Parameter> = phf::phf_map! {
+    "TMP" => Temperature,
+    "VTMP" => VirtualTemperature,
+    "POT" => PotentialTemperature,
+    "EPOT" => PseudoAdiabaticPotentialTemperature,
+    "TMAX" => MaximumTemperature,
+    "TMIN" => MinimumTemperature,
+    "DPT" => DewPointTemperature,
+    "DEPR" => DewPointDepression,
+    "LAPR" => LapseRate,
 };
 
 // struct Key(u32);
