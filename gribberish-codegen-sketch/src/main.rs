@@ -2,19 +2,81 @@ use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
 /// Identification of originating/generating center.
-enum Center {}
+enum Center {
+    NCEP,
+}
+
+enum MasterTableVersion {
+    V32,
+    V33,
+}
+
+struct CenterAndTableVersions {
+    center: Center,
+    local_table_version: u8,
+    master_table_version: MasterTableVersion,
+}
+
+impl CenterAndTableVersions {
+    pub fn from_discipline_and_category_and_parameter_numbers(
+        &self,
+        discipline_num: u8,
+        category_num: u8,
+        parameter_num: u8,
+    ) -> Option<Discipline> {
+        match discipline_num {
+            ..192 => Discipline::from_master_discipline_and_category_and_parameter_numbers(
+                discipline_num,
+                category_num,
+                parameter_num,
+                &self.master_table_version,
+            ),
+
+            // Reserved for local use:
+            192..=254 => self.from_local_discipline_and_category_and_parameter_numbers(
+                discipline_num,
+                category_num,
+                parameter_num,
+            ),
+
+            255 => None, // 255 means "missing"
+        }
+    }
+
+    fn from_local_discipline_and_category_and_parameter_numbers(
+        &self,
+        discipline_num: u8,
+        category_num: u8,
+        parameter_num: u8,
+    ) -> Option<Discipline> {
+        match self.center {
+            Center::NCEP => match discipline_num {
+                192 => Some(Discipline::NcepFoo(
+                    NcepFooProduct::from_category_and_parameter_numbers(
+                        category_num,
+                        parameter_num,
+                    )?,
+                )),
+            },
+        }
+    }
+}
 
 enum Discipline {
     Meteorological(MeteorologicalProduct),
     Hydrological(HydrologicalProduct),
+
+    // Local to NCEP:
+    NcepFoo(NcepFooProduct),
     // etc.
 }
 
 impl Discipline {
-    fn from_discipline_and_category_and_parameter_numbers(
+    fn from_master_discipline_and_category_and_parameter_numbers(
         discipline_num: u8,
         category_num: u8,
         parameter_num: u8,
+        master_table_version: &MasterTableVersion,
     ) -> Option<Self> {
         match discipline_num {
             0 => Some(Discipline::Meteorological(
@@ -23,6 +85,16 @@ impl Discipline {
                     parameter_num,
                 )?,
             )),
+
+            // Demo of how to handle a discipline number which changes meaning across different
+            // master table versions. This discipline number is made up! Just for demo purposes!
+            191 => match *master_table_version {
+                MasterTableVersion::V32 => todo!(),
+                MasterTableVersion::V33 => todo!(),
+            },
+
+            // Reserved for local use:
+            192..=254 => panic!("Local disciplines should never be passed to this function!"),
             _ => None,
         }
     }
@@ -41,7 +113,10 @@ enum MeteorologicalProduct {
 }
 
 impl Product for MeteorologicalProduct {
-    fn from_category_and_parameter_numbers(category_num: u8, parameter_num: u8) -> Option<Self> {
+    fn from_category_and_parameter_numbers(category_num: u8, parameter_num: u8) -> Option<Self>
+    where
+        Self: Sized,
+    {
         match category_num {
             0 => Some(MeteorologicalProduct::Temperature(Temperature::from_u8(
                 parameter_num,
@@ -56,6 +131,15 @@ impl Product for MeteorologicalProduct {
 
 enum HydrologicalProduct {
     HydrologyBasicProduct, // TODO: Add embedded enum
+}
+
+impl Product for HydrologicalProduct {
+    fn from_category_and_parameter_numbers(category_num: u8, parameter_num: u8) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        todo!();
+    }
 }
 
 #[derive(FromPrimitive)]
@@ -107,9 +191,11 @@ impl Temperature {
     }
 }
 
-// `phf::Map` is compiled to a perfect hash table, which is O(1). In contrast,
-// matching strings compiles code which checks each string in turn, which is O(n).
-static ABBREV_TO_PRODUCT_VARIANT: phf::Map<&'static str, Discipline> = phf::phf_map! {
+/// All the abbreviations which are common across all centers and all table versions.
+///
+/// `phf::Map` is compiled to a perfect hash table, which is O(1). In contrast,
+/// matching strings compiles code which checks each string in turn, which is O(n).
+static COMMON_ABBREV_TO_PRODUCT: phf::Map<&'static str, Discipline> = phf::phf_map! {
     "TMP" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::Temperature)),
     "VTMP" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::VirtualTemperature)),
     "POT" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::PotentialTemperature)),
