@@ -1,46 +1,64 @@
+use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
 /// Identification of originating/generating center.
 enum Center {}
 
-#[derive(num_derive::FromPrimitive)]
 enum Discipline {
-    Meteorological = 0,
-    Hydrological = 1,
+    Meteorological(MeteorologicalProduct),
+    Hydrological(HydrologicalProduct),
     // etc.
 }
 
-trait ProductMarker {}
-
 impl Discipline {
-    fn category(&self, category_number: u8) -> Box<dyn ProductMarker> {
-        match self {
-            Discipline::Meteorological => {
-                Box::new(MeteorologicalProduct::from_u8(category_number).unwrap())
-            }
-            Discipline::Hydrological => {
-                Box::new(HydrologicalProduct::from_u8(category_number).unwrap())
-            }
+    fn from_discipline_and_category_and_parameter_numbers(
+        discipline_num: u8,
+        category_num: u8,
+        parameter_num: u8,
+    ) -> Option<Self> {
+        match discipline_num {
+            0 => Some(Discipline::Meteorological(
+                MeteorologicalProduct::from_category_and_parameter_numbers(
+                    category_num,
+                    parameter_num,
+                )?,
+            )),
+            _ => None,
         }
     }
 }
 
-#[derive(num_derive::FromPrimitive)]
+trait Product {
+    fn from_category_and_parameter_numbers(category_num: u8, parameter_num: u8) -> Option<Self>
+    where
+        Self: Sized;
+}
+
 enum MeteorologicalProduct {
-    Temperature = 0,
-    Moisture = 1,
+    Temperature(Temperature),
+    Moisture(Moisture),
     // etc.
 }
 
-#[derive(num_derive::FromPrimitive)]
-enum HydrologicalProduct {
-    HydrologyBasicProduct = 0,
+impl Product for MeteorologicalProduct {
+    fn from_category_and_parameter_numbers(category_num: u8, parameter_num: u8) -> Option<Self> {
+        match category_num {
+            0 => Some(MeteorologicalProduct::Temperature(Temperature::from_u8(
+                parameter_num,
+            )?)),
+            1 => Some(MeteorologicalProduct::Moisture(Moisture::from_u8(
+                parameter_num,
+            )?)),
+            _ => None,
+        }
+    }
 }
 
-impl ProductMarker for MeteorologicalProduct {}
-impl ProductMarker for HydrologicalProduct {}
+enum HydrologicalProduct {
+    HydrologyBasicProduct, // TODO: Add embedded enum
+}
 
-#[derive(num_derive::FromPrimitive)]
+#[derive(FromPrimitive)]
 enum Temperature {
     Temperature,
     VirtualTemperature,
@@ -54,9 +72,8 @@ enum Temperature {
     // etc.
 }
 
-trait Parameter {}
-
-impl Parameter for Temperature {}
+#[derive(FromPrimitive)]
+enum Moisture {}
 
 impl Temperature {
     #[no_mangle] // Required when viewing this in godbolt.org
@@ -92,17 +109,16 @@ impl Temperature {
 
 // `phf::Map` is compiled to a perfect hash table, which is O(1). In contrast,
 // matching strings compiles code which checks each string in turn, which is O(n).
-// TODO: Maybe we do need a super-enum of all Parameters?
-static ABBREV_TO_PRODUCT_VARIANT: phf::Map<&'static str, Box<dyn Parameter>> = phf::phf_map! {
-    "TMP" => Box::new(Temperature::Temperature),
-    "VTMP" => Box::new(Temperature::VirtualTemperature),
-    "POT" => Box::new(Temperature::PotentialTemperature),
-    "EPOT" => Box::new(Temperature::PseudoAdiabaticPotentialTemperature),
-    "TMAX" => Box::new(Temperature::MaximumTemperature),
-    "TMIN" => Box::new(Temperature::MinimumTemperature),
-    "DPT" => Box::new(Temperature::DewPointTemperature),
-    "DEPR" => Box::new(Temperature::DewPointDepression),
-    "LAPR" => Box::new(Temperature::LapseRate),
+static ABBREV_TO_PRODUCT_VARIANT: phf::Map<&'static str, Discipline> = phf::phf_map! {
+    "TMP" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::Temperature)),
+    "VTMP" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::VirtualTemperature)),
+    "POT" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::PotentialTemperature)),
+    "EPOT" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::PseudoAdiabaticPotentialTemperature)),
+    "TMAX" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::MaximumTemperature)),
+    "TMIN" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::MinimumTemperature)),
+    "DPT" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::DewPointTemperature)),
+    "DEPR" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::DewPointDepression)),
+    "LAPR" => Discipline::Meteorological(MeteorologicalProduct::Temperature(Temperature::LapseRate)),
 };
 
 fn main() {
