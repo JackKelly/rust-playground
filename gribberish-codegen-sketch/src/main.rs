@@ -304,8 +304,10 @@ pub fn abbrev_to_product(
 
 // TODO: Think about the API for decoding vertical levels and steps from IDX files and from GRIB.
 //       Probably using GRIB Templates, e.g. https://www.nco.ncep.noaa.gov/pmb/docs/grib2/grib2_doc/grib2_temp4-0.shtml
+// TODO: Move all this code into hypergrib/crates/grib_tables
 // TODO: Split the code above into separate rust files.
 // TODO: Update this main function.
+// TODO: Flesh the tables out (manually) with enough data to get started
 // TODO: Link to this code from https://github.com/mpiannucci/gribberish/issues/63
 fn main() {
     // First, build a ParamDecoder:
