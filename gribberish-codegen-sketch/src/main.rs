@@ -1,3 +1,5 @@
+use num_traits::FromPrimitive;
+
 /// Identification of originating/generating center.
 enum Center {}
 
@@ -54,7 +56,7 @@ enum Temperature {
 
 trait Parameter {}
 
-impl Parameter for Temperature;
+impl Parameter for Temperature {}
 
 impl Temperature {
     #[no_mangle] // Required when viewing this in godbolt.org
@@ -90,7 +92,7 @@ impl Temperature {
 
 // `phf::Map` is compiled to a perfect hash table, which is O(1). In contrast,
 // matching strings compiles code which checks each string in turn, which is O(n).
-// TODO: Maybe we do need a super-struct of all Parameters?
+// TODO: Maybe we do need a super-enum of all Parameters?
 static ABBREV_TO_PRODUCT_VARIANT: phf::Map<&'static str, Box<dyn Parameter>> = phf::phf_map! {
     "TMP" => Box::new(Temperature::Temperature),
     "VTMP" => Box::new(Temperature::VirtualTemperature),
