@@ -1,9 +1,0 @@
-[package]
-name = "gribberish-codegen-sketch"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-num-derive = "0.4.2"
-num-traits = "0.2.19"
-phf = { version = "0.11.2", features = ["macros"] }
